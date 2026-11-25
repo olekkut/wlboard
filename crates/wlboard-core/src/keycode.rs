@@ -718,6 +718,7 @@ pub enum IconId {
     Plus,
     Trash,
     Copy,
+    Folder,
 }
 
 /// Functional category of a keycap (controls visual styling & behavior).

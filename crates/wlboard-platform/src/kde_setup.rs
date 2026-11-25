@@ -120,6 +120,36 @@ pub fn enable_kde_lockscreen_support() -> Result<String, String> {
     Ok("Enabled! Log out & back in once for mouse Lockscreen support.".to_owned())
 }
 
+/// Safely disable KDE Plasma Lockscreen virtual keyboard integration for `wlboard`
+/// without affecting any other KWin or Plasma settings.
+pub fn disable_kde_lockscreen_support() -> Result<String, String> {
+    if let Some(kwinrc) = kwinrc_path()
+        && kwinrc.exists()
+    {
+        remove_kwin_input_method_in_file(&kwinrc)
+            .map_err(|e| format!("Failed updating {}: {e}", kwinrc.display()))?;
+    }
+    if let Some(env_conf) = env_d_path()
+        && env_conf.exists()
+    {
+        fs::remove_file(&env_conf)
+            .map_err(|e| format!("Failed removing {}: {e}", env_conf.display()))?;
+    }
+
+    let _ = Command::new("kbuildsycoca6").status();
+    let _ = Command::new("dbus-send")
+        .args([
+            "--session",
+            "--type=method_call",
+            "--dest=org.kde.KWin",
+            "/KWin",
+            "org.kde.KWin.reconfigure",
+        ])
+        .status();
+
+    Ok("Disabled KDE Lockscreen integration (system restored cleanly).".to_owned())
+}
+
 /// Remove the `KWIN_IM_SHOW_ALWAYS=1` override file if the user wants touch-only IM activation.
 pub fn disable_kde_lockscreen_mouse_override() -> Result<String, String> {
     let env_conf =
@@ -129,6 +159,123 @@ pub fn disable_kde_lockscreen_mouse_override() -> Result<String, String> {
             .map_err(|e| format!("Failed removing {}: {e}", env_conf.display()))?;
     }
     Ok("Removed KWIN_IM_SHOW_ALWAYS override (log out & back in to apply).".to_owned())
+}
+
+fn find_sddm_script() -> Option<PathBuf> {
+    let installed = PathBuf::from("/usr/share/wlboard/scripts/setup-sddm.sh");
+    if installed.exists() {
+        return Some(installed);
+    }
+    let local = PathBuf::from("packaging/deb/setup-sddm.sh");
+    if local.exists() {
+        return Some(local);
+    }
+    None
+}
+
+/// Enable `wlboard` on the SDDM Wayland login screen via standard GUI Polkit (`pkexec`) prompt.
+pub fn enable_sddm_support_gui() -> Result<String, String> {
+    let Some(script) = find_sddm_script() else {
+        return Err("setup-sddm.sh not found (install the wlboard .deb package first)".to_owned());
+    };
+    let output = Command::new("pkexec")
+        .arg(&script)
+        .output()
+        .map_err(|e| format!("Could not launch pkexec admin prompt: {e}"))?;
+    if output.status.success() {
+        Ok("SDDM Login Screen enabled! Reboot or log out to test.".to_owned())
+    } else if output.status.code() == Some(126) || output.status.code() == Some(127) {
+        Err("Admin authentication canceled.".to_owned())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Err(if stderr.is_empty() {
+            "SDDM setup script returned an error.".to_owned()
+        } else {
+            format!("SDDM setup failed: {stderr}")
+        })
+    }
+}
+
+/// Safely disable `wlboard` on the SDDM Wayland login screen via GUI Polkit (`pkexec`) prompt.
+pub fn disable_sddm_support_gui() -> Result<String, String> {
+    let Some(script) = find_sddm_script() else {
+        return Err("setup-sddm.sh not found.".to_owned());
+    };
+    let output = Command::new("pkexec")
+        .arg(&script)
+        .arg("--remove")
+        .output()
+        .map_err(|e| format!("Could not launch pkexec admin prompt: {e}"))?;
+    if output.status.success() {
+        Ok("SDDM Login Screen config removed cleanly.".to_owned())
+    } else if output.status.code() == Some(126) || output.status.code() == Some(127) {
+        Err("Admin authentication canceled.".to_owned())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Err(if stderr.is_empty() {
+            "Failed removing SDDM config.".to_owned()
+        } else {
+            format!("SDDM removal failed: {stderr}")
+        })
+    }
+}
+
+/// Returns `true` when running inside the SDDM login greeter OR when the desktop
+/// lockscreen (`org.freedesktop.ScreenSaver`) is currently active.
+///
+/// Used by `wlboard --input-method` so it NEVER duplicates over the floating
+/// desktop overlay while the user is working on an unlocked desktop.
+#[must_use]
+pub fn is_lockscreen_or_greeter_active() -> bool {
+    if std::env::var("XDG_SESSION_CLASS")
+        .map(|v| v.eq_ignore_ascii_case("greeter"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    if std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .map(|u| u == "sddm" || u == "gdm" || u == "greeter")
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
+        return true;
+    }
+
+    futures_lite::future::block_on(async {
+        let Ok(conn) = zbus::Connection::session().await else {
+            return true;
+        };
+        let Ok(proxy) = zbus::Proxy::new(
+            &conn,
+            "org.freedesktop.ScreenSaver",
+            "/ScreenSaver",
+            "org.freedesktop.ScreenSaver",
+        )
+        .await
+        else {
+            return true;
+        };
+        proxy
+            .call::<_, _, bool>("GetActive", &())
+            .await
+            .unwrap_or(true)
+    })
+}
+
+/// Open a local directory in the user's default file manager (Dolphin, Nautilus, etc.) via `xdg-open`.
+pub fn open_directory_in_file_manager(dir: &Path) -> Result<String, String> {
+    fs::create_dir_all(dir).map_err(|e| format!("Failed creating {}: {e}", dir.display()))?;
+    Command::new("xdg-open")
+        .arg(dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Could not launch file manager (xdg-open): {e}"))?;
+    Ok(format!("Opened {}", dir.display()))
 }
 
 /// Safely update `[Wayland]` inside `kwinrc`, setting `InputMethod[$e]` and
@@ -201,12 +348,46 @@ pub fn set_kwin_input_method_in_file(path: &Path, desktop_path: &str) -> std::io
     Ok(())
 }
 
+/// Safely remove `wlboard-im.desktop` from `[Wayland]` inside `kwinrc` while preserving
+/// every other KWin section and setting.
+pub fn remove_kwin_input_method_in_file(path: &Path) -> std::io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(path)?;
+    let mut out_lines = Vec::new();
+    let mut in_wayland = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_wayland = trimmed == "[Wayland]";
+            out_lines.push(line.to_owned());
+            continue;
+        }
+        if in_wayland
+            && ((trimmed.starts_with("InputMethod") && trimmed.contains("wlboard-im.desktop"))
+                || trimmed == "VirtualKeyboardEnabled=true")
+        {
+            continue;
+        }
+        out_lines.push(line.to_owned());
+    }
+
+    let mut out = out_lines.join("\n");
+    out.push('\n');
+    let tmp = path.with_extension("tmp");
+    fs::write(&tmp, out)?;
+    fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn updates_kwinrc_wayland_section_without_clobbering_other_settings() {
+    fn updates_and_removes_kwinrc_wayland_section_without_clobbering_other_settings() {
         let dir = std::env::temp_dir().join(format!("wlboard_kwinrc_test_{}", std::process::id()));
         let path = dir.join("kwinrc");
         fs::create_dir_all(&dir).expect("mkdir");
@@ -225,6 +406,14 @@ mod tests {
         assert!(updated.contains("VirtualKeyboardEnabled=true"));
         assert!(updated.contains("FocusPolicy=ClickToFocus"));
         assert!(!updated.contains("plasma.keyboard.desktop"));
+
+        remove_kwin_input_method_in_file(&path).expect("remove from kwinrc");
+        let cleaned = fs::read_to_string(&path).expect("read cleaned");
+        assert!(cleaned.contains("LatencyPolicy=Low"));
+        assert!(cleaned.contains("EnablePrimarySelection=true"));
+        assert!(cleaned.contains("FocusPolicy=ClickToFocus"));
+        assert!(!cleaned.contains("wlboard-im.desktop"));
+        assert!(!cleaned.contains("VirtualKeyboardEnabled=true"));
 
         let _ = fs::remove_dir_all(&dir);
     }

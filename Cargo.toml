@@ -8,12 +8,12 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 authors = ["Aleksander Kutycki <74899889+olekkut@users.noreply.github.com>"]
 license = "GPL-3.0-or-later"
 repository = "https://github.com/olekkut/wlboard"
-description = "Lightweight, customizable native Wayland floating virtual keyboard written in Rust"
+description = "Lightweight, customizable native Wayland & X11 floating virtual keyboard written in Rust"
 rust-version = "1.89"
 
 [workspace.dependencies]
@@ -38,6 +38,7 @@ wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+x11rb = { version = "0.13", default-features = false, features = ["render", "shape"] }
 cosmic-text = "0.19"
 resvg = { version = "0.50", default-features = false }
 tiny-skia = "0.12"

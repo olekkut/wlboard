@@ -360,6 +360,10 @@ impl ThemeColors {
     }
 }
 
+fn default_scale_one() -> f32 {
+    1.0
+}
+
 /// Complete visual appearance configuration (also saved inside User Presets).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppearanceSettings {
@@ -369,6 +373,16 @@ pub struct AppearanceSettings {
     pub key_border_width: f32,
     pub opacity: f32,
     pub font_scale: f32,
+    #[serde(default = "default_scale_one")]
+    pub letter_font_scale: f32,
+    #[serde(default = "default_scale_one")]
+    pub sub_label_scale: f32,
+    #[serde(default = "default_scale_one")]
+    pub modifier_font_scale: f32,
+    #[serde(default = "default_scale_one")]
+    pub media_icon_scale: f32,
+    #[serde(default = "default_scale_one")]
+    pub key_icon_scale: f32,
     pub font_weight: u16,
     pub corner_radius: f32,
     pub key_spacing: f32,
@@ -395,6 +409,11 @@ impl AppearanceSettings {
             key_border_width,
             opacity: 0.96,
             font_scale: 1.0,
+            letter_font_scale: 1.0,
+            sub_label_scale: 1.0,
+            modifier_font_scale: 1.0,
+            media_icon_scale: 1.0,
+            key_icon_scale: 1.0,
             font_weight: 500,
             corner_radius: 8.0,
             key_spacing: 5.0,
@@ -402,7 +421,7 @@ impl AppearanceSettings {
         }
     }
 
-    /// Apply a new theme base while preserving geometry sliders.
+    /// Apply a new theme base while preserving geometry & typography sliders.
     pub fn apply_base(&mut self, base: ThemeBase) {
         self.base = base;
         self.colors = base.default_colors();
@@ -412,12 +431,28 @@ impl AppearanceSettings {
         }
     }
 
+    /// Reset all independent font and icon scale factors back to 100% (1.0).
+    pub fn reset_sizes(&mut self) {
+        self.font_scale = 1.0;
+        self.letter_font_scale = 1.0;
+        self.sub_label_scale = 1.0;
+        self.modifier_font_scale = 1.0;
+        self.media_icon_scale = 1.0;
+        self.key_icon_scale = 1.0;
+        self.font_weight = 500;
+    }
+
     /// Clamp all numeric settings into valid UI bounds.
     pub fn clamp(&mut self) {
         self.outline_width = self.outline_width.clamp(0.0, 4.0);
         self.key_border_width = self.key_border_width.clamp(0.0, 3.0);
         self.opacity = self.opacity.clamp(0.30, 1.00);
         self.font_scale = self.font_scale.clamp(0.75, 1.60);
+        self.letter_font_scale = self.letter_font_scale.clamp(0.60, 1.80);
+        self.sub_label_scale = self.sub_label_scale.clamp(0.60, 1.80);
+        self.modifier_font_scale = self.modifier_font_scale.clamp(0.60, 1.80);
+        self.media_icon_scale = self.media_icon_scale.clamp(0.60, 1.80);
+        self.key_icon_scale = self.key_icon_scale.clamp(0.60, 1.80);
         self.font_weight = match self.font_weight {
             ..=449 => 400,
             450..=549 => 500,

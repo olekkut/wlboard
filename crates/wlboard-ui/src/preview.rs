@@ -235,7 +235,7 @@ pub fn generate_preview_suite(out_dir: &Path) -> Result<Vec<String>, String> {
         written.push(path.display().to_string());
     }
 
-    // 7. Built-in Customize wlboard Settings — Appearance & Layout Tabs
+    // 7. Built-in Customize wlboard Settings — Appearance, Sizes & Fonts, Layout & Panels, and System Tabs
     {
         let mut cfg = AppConfig {
             active_preset: Some("Midnight Cyan".to_owned()),
@@ -243,6 +243,8 @@ pub fn generate_preview_suite(out_dir: &Path) -> Result<Vec<String>, String> {
         };
         cfg.layout.visible_languages = vec!["en".to_owned(), "pl".to_owned(), "uk".to_owned()];
         cfg.layout.keycap_style = KeycapStyle::Symbols;
+        cfg.appearance.letter_font_scale = 1.15;
+        cfg.appearance.media_icon_scale = 1.25;
         let mut state = KeyboardState::new(cfg, &store, &panel_store);
         state.input_backend_status =
             "Wayland Virtual Keyboard (zwp_virtual_keyboard_v1)".to_owned();
@@ -250,15 +252,29 @@ pub fn generate_preview_suite(out_dir: &Path) -> Result<Vec<String>, String> {
         let mut settings = SettingsView::new(&state.config.appearance);
         settings.width = SETTINGS_DEFAULT_WIDTH as f32;
         settings.height = SETTINGS_DEFAULT_HEIGHT as f32;
+        settings.display_backend_label = "Wayland (wlr-layer-shell)".to_owned();
         settings.tab = SettingsTab::Appearance;
         settings.selected_slot = ColorSlot::WindowOutline;
         settings.sync_from_appearance(&state.config.appearance);
         settings.preset_name_input = "Studio Graphite".to_owned();
+        settings.status_message =
+            Some("Saved \"studio-graphite.json\" in ~/.config/wlboard/presets".to_owned());
+        settings.status_folder = Some(store.dir().to_path_buf());
         let pm = render_settings_pixmap(&mut renderer, &mut settings, &state, 2.0);
         let path = out_dir.join("customize_settings_window.png");
         pm.save_png(&path)
             .map_err(|e| format!("save_png failed: {e}"))?;
         written.push(path.display().to_string());
+
+        settings.status_message = None;
+        settings.status_folder = None;
+        settings.tab = SettingsTab::Sizes;
+        let pm_sizes = render_settings_pixmap(&mut renderer, &mut settings, &state, 2.0);
+        let path_sizes = out_dir.join("settings_sizes_fonts_tab.png");
+        pm_sizes
+            .save_png(&path_sizes)
+            .map_err(|e| format!("save_png failed: {e}"))?;
+        written.push(path_sizes.display().to_string());
 
         settings.tab = SettingsTab::Layout;
         let pm_layout = render_settings_pixmap(&mut renderer, &mut settings, &state, 2.0);

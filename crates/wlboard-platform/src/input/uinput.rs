@@ -68,6 +68,10 @@ impl InputBackend for UInputBackend {
         Ok(())
     }
 
+    fn has_held_keys(&self) -> bool {
+        !self.pressed.is_empty()
+    }
+
     fn watchdog_tick(
         &mut self,
         active_held: &[KeyCode],

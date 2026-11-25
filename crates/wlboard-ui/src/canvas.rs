@@ -438,3 +438,34 @@ pub fn copy_pixmap_to_wayland_argb8888(pixmap: &Pixmap, dst: &mut [u8]) {
         d[3] = s[3]; // A
     }
 }
+
+/// Zero-fill a `dst_w x dst_h` BGRA buffer (fully transparent) and blit `pixmap` at `(offset_x, offset_y)`.
+pub fn copy_pixmap_offset_to_argb8888(
+    pixmap: &Pixmap,
+    dst: &mut [u8],
+    dst_w: usize,
+    dst_h: usize,
+    offset_x: usize,
+    offset_y: usize,
+) {
+    dst.fill(0);
+    let src_w = pixmap.width() as usize;
+    let src_h = pixmap.height() as usize;
+    let src = pixmap.data();
+    let copy_w = src_w.min(dst_w.saturating_sub(offset_x));
+    let copy_h = src_h.min(dst_h.saturating_sub(offset_y));
+    for y in 0..copy_h {
+        let src_row_start = y * src_w * 4;
+        let dst_row_start = ((offset_y + y) * dst_w + offset_x) * 4;
+        let src_row = &src[src_row_start..src_row_start + copy_w * 4];
+        let dst_row = &mut dst[dst_row_start..dst_row_start + copy_w * 4];
+        let (s_chunks, _) = src_row.as_chunks::<4>();
+        let (d_chunks, _) = dst_row.as_chunks_mut::<4>();
+        for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+            d[0] = s[2]; // B
+            d[1] = s[1]; // G
+            d[2] = s[0]; // R
+            d[3] = s[3]; // A
+        }
+    }
+}

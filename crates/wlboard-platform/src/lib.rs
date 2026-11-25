@@ -13,7 +13,6 @@ pub mod tray;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
 
 use tracing::{debug, info, warn};
 use wlboard_core::{KeyboardStyle, LayoutRegistry};
@@ -25,12 +24,14 @@ pub use input::{
 pub use ipc::{APP_BUS_NAME, APP_OBJECT_PATH, IpcCommand, try_send_ipc_command};
 pub use kde_setup::{
     KdeLockscreenStatus, detect_kde_lockscreen_status, disable_kde_lockscreen_mouse_override,
-    enable_kde_lockscreen_support, set_kwin_input_method_in_file,
+    disable_kde_lockscreen_support, disable_sddm_support_gui, enable_kde_lockscreen_support,
+    enable_sddm_support_gui, is_lockscreen_or_greeter_active, open_directory_in_file_manager,
+    remove_kwin_input_method_in_file, set_kwin_input_method_in_file,
 };
 pub use layout_sync::{PlasmaLayoutSync, ensure_layout_in_kxkbrc};
 pub use tray::{EventCallback, TrayState};
 
-/// Events pushed from the background D-Bus platform worker into the Wayland UI event loop.
+/// Events pushed from the background D-Bus platform worker into the UI event loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlatformEvent {
     ToggleVisible,
@@ -43,10 +44,11 @@ pub enum PlatformEvent {
     SetPanel(String),
     ExternalLayoutChanged(String),
     LayoutSyncStatus(String),
+    SystemActionFinished(String),
     Quit,
 }
 
-/// Commands sent from the Wayland UI loop to the background D-Bus platform worker.
+/// Commands sent from the UI loop to the background D-Bus platform worker.
 #[derive(Debug, Clone)]
 pub enum PlatformCommand {
     UpdateTray {
@@ -61,6 +63,8 @@ pub enum PlatformCommand {
         code: String,
         auto_register: bool,
     },
+    EnableSddmGui,
+    DisableSddmGui,
     Shutdown,
 }
 
@@ -123,6 +127,14 @@ impl PlatformHandle {
             code,
             auto_register,
         });
+    }
+
+    pub fn enable_sddm_gui(&self) {
+        let _ = self.cmd_tx.send(PlatformCommand::EnableSddmGui);
+    }
+
+    pub fn disable_sddm_gui(&self) {
+        let _ = self.cmd_tx.send(PlatformCommand::DisableSddmGui);
     }
 
     pub fn shutdown(&self) {
@@ -195,16 +207,17 @@ fn run_dbus_worker(
                 });
         }
 
-        loop {
-            match cmd_rx.recv_timeout(Duration::from_millis(100)) {
-                Ok(PlatformCommand::UpdateTray {
+        // Strictly event-driven blocking receive: 0 wakeups/sec while idle!
+        while let Ok(cmd) = cmd_rx.recv() {
+            match cmd {
+                PlatformCommand::UpdateTray {
                     visible,
                     style,
                     active_layout,
                     active_panel,
                     panels,
                     languages,
-                }) => {
+                } => {
                     if let Ok(mut guard) = tray_state.lock() {
                         guard.visible = visible;
                         guard.style = style;
@@ -215,19 +228,42 @@ fn run_dbus_worker(
                         guard.revision = guard.revision.wrapping_add(1);
                     }
                 }
-                Ok(PlatformCommand::SyncSystemLayout {
+                PlatformCommand::SyncSystemLayout {
                     code,
                     auto_register,
-                }) => {
+                } => {
                     let ok = plasma
                         .set_system_layout(&conn, &registry, &code, auto_register)
                         .await;
                     debug!("SyncSystemLayout({code}, auto_register={auto_register}) -> {ok}");
                 }
-                Ok(PlatformCommand::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                PlatformCommand::EnableSddmGui => {
+                    let cb = Arc::clone(&on_event);
+                    let _ = thread::Builder::new()
+                        .name("wlboard-sddm-setup".to_owned())
+                        .spawn(move || {
+                            let msg = match enable_sddm_support_gui() {
+                                Ok(ok) => ok,
+                                Err(err) => err,
+                            };
+                            cb(PlatformEvent::SystemActionFinished(msg));
+                        });
+                }
+                PlatformCommand::DisableSddmGui => {
+                    let cb = Arc::clone(&on_event);
+                    let _ = thread::Builder::new()
+                        .name("wlboard-sddm-setup".to_owned())
+                        .spawn(move || {
+                            let msg = match disable_sddm_support_gui() {
+                                Ok(ok) => ok,
+                                Err(err) => err,
+                            };
+                            cb(PlatformEvent::SystemActionFinished(msg));
+                        });
+                }
+                PlatformCommand::Shutdown => {
                     break;
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
         }
     });

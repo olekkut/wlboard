@@ -94,6 +94,9 @@ pub const fn svg_template(id: IconId) -> &'static str {
         IconId::Copy => {
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>"##
         }
+        IconId::Folder => {
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.8l2 2.2h8.2A1.5 1.5 0 0 1 21 8.7v9.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5Z"/></svg>"##
+        }
     }
 }
 
@@ -176,6 +179,7 @@ mod tests {
             IconId::Plus,
             IconId::Trash,
             IconId::Copy,
+            IconId::Folder,
         ];
         for id in all {
             let pm = cache

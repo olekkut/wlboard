@@ -170,6 +170,10 @@ impl InputBackend for WaylandInputMethodBackend {
         Ok(())
     }
 
+    fn has_held_keys(&self) -> bool {
+        self.fallback.as_ref().is_some_and(|fb| fb.has_held_keys())
+    }
+
     fn watchdog_tick(
         &mut self,
         active_held: &[KeyCode],

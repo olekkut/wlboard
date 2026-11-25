@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VERSION="0.3.0-1"
+VERSION="0.4.0-1"
 ARCH="amd64"
 PKG_NAME="wlboard_${VERSION}_${ARCH}.deb"
 STAGE_DIR="$(mktemp -d)"

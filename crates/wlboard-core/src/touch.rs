@@ -94,8 +94,18 @@ impl ResizeEdge {
     }
 
     #[must_use]
+    pub const fn moves_right(self) -> bool {
+        matches!(self, Self::East | Self::NorthEast | Self::SouthEast)
+    }
+
+    #[must_use]
     pub const fn moves_top(self) -> bool {
         matches!(self, Self::North | Self::NorthWest | Self::NorthEast)
+    }
+
+    #[must_use]
+    pub const fn moves_bottom(self) -> bool {
+        matches!(self, Self::South | Self::SouthWest | Self::SouthEast)
     }
 }
 

@@ -1,10 +1,12 @@
 //! Built-in themed Wayland `xdg_toplevel` **Customize wlboard** Settings & Presets window
 //! rendered with the exact same `tiny-skia` + `cosmic-text` + `resvg` engine.
 
+use std::path::PathBuf;
+
 use tiny_skia::{Pixmap, Transform};
 use wlboard_core::{
-    ACCENT_SWATCHES, AppearanceSettings, Color, ColorSlot, IconId, KeyCode, KeyboardState,
-    KeycapStyle, Point, PresetStore, Rect, ThemeBase,
+    ACCENT_SWATCHES, AppConfig, AppearanceSettings, Color, ColorSlot, IconId, KeyCode,
+    KeyboardState, KeycapStyle, Point, PresetStore, Rect, ThemeBase,
 };
 use wlboard_platform::{KdeLockscreenStatus, detect_kde_lockscreen_status};
 
@@ -20,6 +22,7 @@ const LANG_PICKER_PAGE_SIZE: usize = 12;
 pub enum SettingsTab {
     #[default]
     Appearance,
+    Sizes,
     Layout,
     Behavior,
 }
@@ -32,13 +35,18 @@ pub enum FocusedField {
     LanguageSearch,
 }
 
-/// Interactive slider identifiers inside Tab 1.
+/// Interactive slider identifiers across Appearance & Sizes tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SliderId {
     OutlineWidth,
     KeyBorderWidth,
     Opacity,
     FontScale,
+    LetterFontScale,
+    SubLabelScale,
+    ModifierFontScale,
+    MediaIconScale,
+    KeyIconScale,
     CornerRadius,
     KeySpacing,
 }
@@ -66,9 +74,14 @@ pub enum SettingsAction {
     StartWindowMove,
     ConfigChanged,
     LayoutChanged(String),
+    CopyText(String),
+    OpenFolder(PathBuf),
     OpenPanelEditor,
     EnableKdeLockscreen,
+    DisableKdeLockscreen,
     DisableKdeMouseOverride,
+    EnableSddm,
+    DisableSddm,
     CloseSettings,
     QuitApp,
 }
@@ -86,18 +99,22 @@ enum ControlHit {
     CloseButton,
     SelectPreset(String),
     PresetNameInput,
+    CopyPresetName,
     SavePreset,
     DeletePreset,
+    OpenFolder(PathBuf),
     ThemeBase(ThemeBase),
     AccentSwatch(Color),
     ColorSlotChip(ColorSlot),
     SvSquare(Rect),
     HueBar(Rect),
     HexInput,
+    CopyHex,
     Slider(SliderId, Rect),
     FontWeight(u16),
     Toggle(ToggleId),
     ResetDefaults,
+    ResetSizes,
     PanelPill(String),
     OpenPanelEditor,
     KeycapStyle(KeycapStyle),
@@ -110,7 +127,10 @@ enum ControlHit {
     LangPickerToggle(String),
     LangPickerPage(isize),
     EnableKdeLockscreen,
+    DisableKdeLockscreen,
     DisableKdeMouseOverride,
+    EnableSddm,
+    DisableSddm,
     QuitButton,
 }
 
@@ -123,7 +143,10 @@ pub struct SettingsView {
     pub hex_input: String,
     pub preset_name_input: String,
     pub focused_field: Option<FocusedField>,
+    pub selection_all: bool,
     pub status_message: Option<String>,
+    pub status_folder: Option<PathBuf>,
+    pub display_backend_label: String,
     pub lang_picker_open: bool,
     pub lang_search_input: String,
     pub lang_picker_page: usize,
@@ -151,7 +174,10 @@ impl SettingsView {
             hex_input: initial_color.to_hex(),
             preset_name_input: String::new(),
             focused_field: None,
+            selection_all: false,
             status_message: None,
+            status_folder: None,
+            display_backend_label: "Wayland Layer-Shell (zwlr_layer_shell_v1)".to_owned(),
             lang_picker_open: false,
             lang_search_input: String::new(),
             lang_picker_page: 0,
@@ -195,10 +221,13 @@ impl SettingsView {
 
         let Some(hit) = hit else {
             self.focused_field = None;
+            self.selection_all = false;
             return SettingsAction::StartWindowMove;
         };
 
         self.status_message = None;
+        self.status_folder = None;
+        self.selection_all = false;
 
         match hit {
             ControlHit::Tab(t) => {
@@ -226,6 +255,16 @@ impl SettingsView {
                 self.focused_field = Some(FocusedField::PresetName);
                 SettingsAction::Redraw
             }
+            ControlHit::CopyPresetName => {
+                let text = self.preset_name_input.clone();
+                if text.is_empty() {
+                    self.status_message = Some("Preset name field is empty".to_owned());
+                    SettingsAction::Redraw
+                } else {
+                    self.status_message = Some(format!("Copied \"{text}\" to clipboard"));
+                    SettingsAction::CopyText(text)
+                }
+            }
             ControlHit::SavePreset => {
                 let name = self.preset_name_input.trim().to_owned();
                 if name.is_empty() {
@@ -237,7 +276,12 @@ impl SettingsView {
                     Ok(saved) => {
                         state.config.active_preset = Some(saved.name.clone());
                         state.reload_presets(preset_store);
-                        self.status_message = Some(format!("Saved preset \"{}\"", saved.name));
+                        let slug = PresetStore::sanitize_slug(&saved.name);
+                        self.status_message = Some(format!(
+                            "Saved \"{slug}.json\" in {}",
+                            preset_store.dir().display()
+                        ));
+                        self.status_folder = Some(preset_store.dir().to_path_buf());
                         SettingsAction::ConfigChanged
                     }
                     Err(err) => {
@@ -274,6 +318,7 @@ impl SettingsView {
                     }
                 }
             }
+            ControlHit::OpenFolder(dir) => SettingsAction::OpenFolder(dir),
             ControlHit::ThemeBase(base) => {
                 state.config.appearance.apply_base(base);
                 state.config.active_preset = None;
@@ -309,6 +354,11 @@ impl SettingsView {
             ControlHit::HexInput => {
                 self.focused_field = Some(FocusedField::HexColor);
                 SettingsAction::Redraw
+            }
+            ControlHit::CopyHex => {
+                let text = self.hex_input.clone();
+                self.status_message = Some(format!("Copied \"{text}\" to clipboard"));
+                SettingsAction::CopyText(text)
             }
             ControlHit::Slider(id, rect) => {
                 self.focused_field = None;
@@ -367,6 +417,12 @@ impl SettingsView {
                 state.config.active_preset = None;
                 self.sync_from_appearance(&state.config.appearance);
                 self.status_message = Some("Reset to Graphite Dark defaults".to_owned());
+                SettingsAction::ConfigChanged
+            }
+            ControlHit::ResetSizes => {
+                state.config.appearance.reset_sizes();
+                state.config.active_preset = None;
+                self.status_message = Some("Reset all font & icon sizes to 100%".to_owned());
                 SettingsAction::ConfigChanged
             }
             ControlHit::PanelPill(pid) => {
@@ -467,7 +523,10 @@ impl SettingsView {
                 SettingsAction::Redraw
             }
             ControlHit::EnableKdeLockscreen => SettingsAction::EnableKdeLockscreen,
+            ControlHit::DisableKdeLockscreen => SettingsAction::DisableKdeLockscreen,
             ControlHit::DisableKdeMouseOverride => SettingsAction::DisableKdeMouseOverride,
+            ControlHit::EnableSddm => SettingsAction::EnableSddm,
+            ControlHit::DisableSddm => SettingsAction::DisableSddm,
             ControlHit::QuitButton => SettingsAction::QuitApp,
         }
     }
@@ -488,27 +547,97 @@ impl SettingsView {
         self.active_drag = None;
     }
 
+    /// Return the current text of whichever inline input is focused.
+    #[must_use]
+    pub fn focused_field_text(&self) -> Option<&str> {
+        match self.focused_field? {
+            FocusedField::PresetName => Some(&self.preset_name_input),
+            FocusedField::HexColor => Some(&self.hex_input),
+            FocusedField::LanguageSearch => Some(&self.lang_search_input),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn handle_key_input(
         &mut self,
         code: KeyCode,
         shift: bool,
+        ctrl: bool,
+        clipboard_text: Option<&str>,
         state: &mut KeyboardState,
         preset_store: &PresetStore,
     ) -> SettingsAction {
         if code == KeyCode::ESC && self.lang_picker_open {
             self.lang_picker_open = false;
             self.focused_field = None;
+            self.selection_all = false;
             return SettingsAction::Redraw;
         }
         let Some(field) = self.focused_field else {
             return SettingsAction::None;
         };
 
+        // Clipboard & Select-All shortcuts: Ctrl+A, Ctrl+C, Ctrl+X, Ctrl+V
+        if ctrl {
+            match code {
+                KeyCode::A => {
+                    self.selection_all = true;
+                    return SettingsAction::Redraw;
+                }
+                KeyCode::C => {
+                    if let Some(txt) = self.focused_field_text().map(ToOwned::to_owned)
+                        && !txt.is_empty()
+                    {
+                        self.status_message = Some(format!("Copied \"{txt}\" to clipboard"));
+                        return SettingsAction::CopyText(txt);
+                    }
+                    return SettingsAction::None;
+                }
+                KeyCode::X => {
+                    let copied = self.focused_field_text().unwrap_or_default().to_owned();
+                    match field {
+                        FocusedField::PresetName => self.preset_name_input.clear(),
+                        FocusedField::HexColor => self.hex_input = "#".to_owned(),
+                        FocusedField::LanguageSearch => {
+                            self.lang_search_input.clear();
+                            self.lang_picker_page = 0;
+                        }
+                    }
+                    self.selection_all = false;
+                    if !copied.is_empty() {
+                        self.status_message = Some(format!("Cut \"{copied}\" to clipboard"));
+                        return SettingsAction::CopyText(copied);
+                    }
+                    return SettingsAction::Redraw;
+                }
+                KeyCode::V => {
+                    if let Some(clip) = clipboard_text {
+                        return self.paste_into_field(field, clip, state);
+                    }
+                    return SettingsAction::None;
+                }
+                _ => return SettingsAction::None,
+            }
+        }
+
         if code == KeyCode::ESC {
             self.focused_field = None;
+            self.selection_all = false;
             return SettingsAction::Redraw;
         }
         if code == KeyCode::BACKSPACE {
+            if self.selection_all {
+                match field {
+                    FocusedField::PresetName => self.preset_name_input.clear(),
+                    FocusedField::HexColor => self.hex_input = "#".to_owned(),
+                    FocusedField::LanguageSearch => {
+                        self.lang_search_input.clear();
+                        self.lang_picker_page = 0;
+                    }
+                }
+                self.selection_all = false;
+                return SettingsAction::Redraw;
+            }
             match field {
                 FocusedField::PresetName => {
                     self.preset_name_input.pop();
@@ -526,6 +655,7 @@ impl SettingsView {
             return SettingsAction::Redraw;
         }
         if code == KeyCode::ENTER {
+            self.selection_all = false;
             match field {
                 FocusedField::PresetName => {
                     let name = self.preset_name_input.trim().to_owned();
@@ -534,7 +664,12 @@ impl SettingsView {
                     {
                         state.config.active_preset = Some(saved.name.clone());
                         state.reload_presets(preset_store);
-                        self.status_message = Some(format!("Saved preset \"{}\"", saved.name));
+                        let slug = PresetStore::sanitize_slug(&saved.name);
+                        self.status_message = Some(format!(
+                            "Saved \"{slug}.json\" in {}",
+                            preset_store.dir().display()
+                        ));
+                        self.status_folder = Some(preset_store.dir().to_path_buf());
                         self.focused_field = None;
                         return SettingsAction::ConfigChanged;
                     }
@@ -559,6 +694,18 @@ impl SettingsView {
         let Some(ch) = evdev_to_ascii(code, shift) else {
             return SettingsAction::None;
         };
+
+        if self.selection_all {
+            match field {
+                FocusedField::PresetName => self.preset_name_input.clear(),
+                FocusedField::HexColor => self.hex_input = "#".to_owned(),
+                FocusedField::LanguageSearch => {
+                    self.lang_search_input.clear();
+                    self.lang_picker_page = 0;
+                }
+            }
+            self.selection_all = false;
+        }
 
         match field {
             FocusedField::PresetName => {
@@ -596,6 +743,70 @@ impl SettingsView {
             }
         }
         SettingsAction::None
+    }
+
+    fn paste_into_field(
+        &mut self,
+        field: FocusedField,
+        clip: &str,
+        state: &mut KeyboardState,
+    ) -> SettingsAction {
+        if self.selection_all {
+            match field {
+                FocusedField::PresetName => self.preset_name_input.clear(),
+                FocusedField::HexColor => self.hex_input = "#".to_owned(),
+                FocusedField::LanguageSearch => {
+                    self.lang_search_input.clear();
+                    self.lang_picker_page = 0;
+                }
+            }
+            self.selection_all = false;
+        }
+        match field {
+            FocusedField::PresetName => {
+                for ch in clip.chars() {
+                    if self.preset_name_input.len() >= 28 {
+                        break;
+                    }
+                    if ch.is_ascii_alphanumeric() || ch == ' ' || ch == '-' || ch == '_' {
+                        self.preset_name_input.push(ch);
+                    }
+                }
+                SettingsAction::Redraw
+            }
+            FocusedField::HexColor => {
+                let hex_digits: String = clip
+                    .chars()
+                    .filter(char::is_ascii_hexdigit)
+                    .take(6)
+                    .map(|c| c.to_ascii_uppercase())
+                    .collect();
+                if hex_digits.is_empty() {
+                    return SettingsAction::None;
+                }
+                self.hex_input = format!("#{hex_digits}");
+                if let Some(col) = Color::from_hex(&self.hex_input) {
+                    state.config.appearance.colors.set(self.selected_slot, col);
+                    state.config.active_preset = None;
+                    self.hsv = col.to_hsv();
+                    self.hex_input = col.to_hex();
+                    return SettingsAction::ConfigChanged;
+                }
+                SettingsAction::Redraw
+            }
+            FocusedField::LanguageSearch => {
+                for ch in clip.chars() {
+                    if self.lang_search_input.len() >= 28 {
+                        break;
+                    }
+                    if ch.is_ascii_alphanumeric() || ch == ' ' {
+                        self.lang_search_input.push(ch);
+                    }
+                }
+                self.lang_picker_page = 0;
+                SettingsAction::Redraw
+            }
+        }
     }
 
     fn filtered_languages(&self, state: &KeyboardState) -> Vec<String> {
@@ -643,6 +854,11 @@ impl SettingsView {
             SliderId::KeyBorderWidth => app.key_border_width = (t * 3.0 * 2.0).round() / 2.0,
             SliderId::Opacity => app.opacity = 0.30 + t * 0.70,
             SliderId::FontScale => app.font_scale = 0.75 + t * 0.85,
+            SliderId::LetterFontScale => app.letter_font_scale = 0.60 + t * 1.20,
+            SliderId::SubLabelScale => app.sub_label_scale = 0.60 + t * 1.20,
+            SliderId::ModifierFontScale => app.modifier_font_scale = 0.60 + t * 1.20,
+            SliderId::MediaIconScale => app.media_icon_scale = 0.60 + t * 1.20,
+            SliderId::KeyIconScale => app.key_icon_scale = 0.60 + t * 1.20,
             SliderId::CornerRadius => app.corner_radius = (t * 16.0).round(),
             SliderId::KeySpacing => app.key_spacing = 1.0 + (t * 7.0).round(),
         }
@@ -722,17 +938,18 @@ impl SettingsView {
         self.hits.push((close_rect, ControlHit::CloseButton));
 
         let tabs = [
-            (SettingsTab::Appearance, "Appearance", 104.0),
-            (SettingsTab::Layout, "Layout & Panels", 122.0),
-            (SettingsTab::Behavior, "System", 78.0),
+            (SettingsTab::Appearance, "Appearance", 92.0),
+            (SettingsTab::Sizes, "Sizes & Fonts", 104.0),
+            (SettingsTab::Layout, "Layout & Panels", 112.0),
+            (SettingsTab::Behavior, "System", 66.0),
         ];
         let tabs_start_x =
-            close_rect.x - 14.0 - tabs.iter().map(|(_, _, tw)| tw + 6.0).sum::<f32>();
+            close_rect.x - 10.0 - tabs.iter().map(|(_, _, tw)| tw + 5.0).sum::<f32>();
 
         // Centered drag-handle pill inside the empty header gap between title and tabs
-        let gap_left = 224.0;
-        if tabs_start_x - gap_left >= 52.0 {
-            let grip_w = 42.0;
+        let gap_left = 202.0;
+        if tabs_start_x - gap_left >= 44.0 {
+            let grip_w = 34.0;
             let grip_x = gap_left + (tabs_start_x - gap_left - grip_w) * 0.5;
             UiRenderer::fill_rounded_rect(
                 pixmap,
@@ -762,14 +979,14 @@ impl SettingsView {
                 pixmap,
                 label,
                 r,
-                12.0,
+                11.5,
                 if active { 700 } else { 500 },
                 fg,
                 TextAlign::Center,
                 scale,
             );
             self.hits.push((r, ControlHit::Tab(tab_id)));
-            tx += tw + 6.0;
+            tx += tw + 5.0;
         }
 
         let content_x = 16.0;
@@ -790,6 +1007,19 @@ impl SettingsView {
             match self.tab {
                 SettingsTab::Appearance => {
                     self.render_appearance_tab(
+                        renderer,
+                        pixmap,
+                        state,
+                        content_x,
+                        content_w,
+                        &mut y,
+                        card_bg,
+                        card_border,
+                        scale,
+                    );
+                }
+                SettingsTab::Sizes => {
+                    self.render_sizes_tab(
                         renderer,
                         pixmap,
                         state,
@@ -831,16 +1061,51 @@ impl SettingsView {
         }
 
         if let Some(ref msg) = self.status_message {
+            let folder_btn_w = if self.status_folder.is_some() {
+                104.0
+            } else {
+                0.0
+            };
             renderer.draw_text(
                 pixmap,
                 msg,
-                Rect::new(content_x, h - 22.0, content_w, 18.0),
-                11.0,
+                Rect::new(
+                    content_x,
+                    h - 24.0,
+                    (content_w - folder_btn_w - 8.0).max(80.0),
+                    20.0,
+                ),
+                10.5,
                 500,
                 pal.colors.accent,
                 TextAlign::Left,
                 scale,
             );
+            if let Some(ref dir) = self.status_folder {
+                let open_r = Rect::new(content_x + content_w - 102.0, h - 25.0, 102.0, 21.0);
+                UiRenderer::fill_rounded_rect(pixmap, open_r, 5.0, pal.colors.modifier_bg, scale);
+                UiRenderer::stroke_rounded_rect(pixmap, open_r, 5.0, 1.0, card_border, scale);
+                renderer.draw_icon(
+                    pixmap,
+                    IconId::Folder,
+                    Rect::new(open_r.x + 6.0, open_r.y, 14.0, open_r.h),
+                    11.5,
+                    pal.colors.text_icon,
+                    scale,
+                );
+                renderer.draw_text(
+                    pixmap,
+                    "Open Folder",
+                    Rect::new(open_r.x + 22.0, open_r.y, open_r.w - 26.0, open_r.h),
+                    10.0,
+                    600,
+                    pal.colors.text_icon,
+                    TextAlign::Center,
+                    scale,
+                );
+                self.hits
+                    .push((open_r, ControlHit::OpenFolder(dir.clone())));
+            }
         }
 
         UiRenderer::stroke_rounded_rect(
@@ -883,6 +1148,42 @@ impl SettingsView {
             TextAlign::Left,
             scale,
         );
+
+        let open_presets_r = Rect::new(x + w - 114.0, *y + 6.0, 102.0, 21.0);
+        UiRenderer::fill_rounded_rect(pixmap, open_presets_r, 5.0, pal.colors.modifier_bg, scale);
+        UiRenderer::stroke_rounded_rect(pixmap, open_presets_r, 5.0, 1.0, card_border, scale);
+        renderer.draw_icon(
+            pixmap,
+            IconId::Folder,
+            Rect::new(
+                open_presets_r.x + 6.0,
+                open_presets_r.y,
+                14.0,
+                open_presets_r.h,
+            ),
+            12.0,
+            pal.colors.text_icon,
+            scale,
+        );
+        renderer.draw_text(
+            pixmap,
+            "Open Folder",
+            Rect::new(
+                open_presets_r.x + 22.0,
+                open_presets_r.y,
+                open_presets_r.w - 26.0,
+                open_presets_r.h,
+            ),
+            10.0,
+            600,
+            pal.colors.text_icon,
+            TextAlign::Center,
+            scale,
+        );
+        self.hits.push((
+            open_presets_r,
+            ControlHit::OpenFolder(AppConfig::presets_dir()),
+        ));
 
         let mut px = x + 12.0;
         let py = *y + 30.0;
@@ -937,12 +1238,25 @@ impl SettingsView {
         }
 
         let row_y = *y + 57.0;
-        let save_w = 72.0;
-        let del_w = 72.0;
-        let input_w = (w - 24.0 - save_w - del_w - 14.0).max(120.0);
+        let copy_w = 28.0;
+        let save_w = 68.0;
+        let del_w = 68.0;
+        let input_w = (w - 24.0 - copy_w - save_w - del_w - 20.0).max(120.0);
         let input_rect = Rect::new(x + 12.0, row_y, input_w, 26.0);
         let name_focused = self.focused_field == Some(FocusedField::PresetName);
-        UiRenderer::fill_rounded_rect(pixmap, input_rect, 6.0, pal.colors.window_bg, scale);
+        let name_selected =
+            name_focused && self.selection_all && !self.preset_name_input.is_empty();
+        UiRenderer::fill_rounded_rect(
+            pixmap,
+            input_rect,
+            6.0,
+            if name_selected {
+                pal.colors.accent.mix(pal.colors.window_bg, 0.55)
+            } else {
+                pal.colors.window_bg
+            },
+            scale,
+        );
         UiRenderer::stroke_rounded_rect(
             pixmap,
             input_rect,
@@ -957,7 +1271,7 @@ impl SettingsView {
         );
         let display_name = if self.preset_name_input.is_empty() && !name_focused {
             "Preset name (e.g. Midnight Cyan)".to_owned()
-        } else if name_focused {
+        } else if name_focused && !name_selected {
             format!("{}|", self.preset_name_input)
         } else {
             self.preset_name_input.clone()
@@ -984,7 +1298,20 @@ impl SettingsView {
         );
         self.hits.push((input_rect, ControlHit::PresetNameInput));
 
-        let save_rect = Rect::new(input_rect.x + input_rect.w + 7.0, row_y, save_w, 26.0);
+        let copy_name_r = Rect::new(input_rect.x + input_rect.w + 6.0, row_y, copy_w, 26.0);
+        UiRenderer::fill_rounded_rect(pixmap, copy_name_r, 6.0, pal.colors.modifier_bg, scale);
+        UiRenderer::stroke_rounded_rect(pixmap, copy_name_r, 6.0, 1.0, card_border, scale);
+        renderer.draw_icon(
+            pixmap,
+            IconId::Copy,
+            copy_name_r,
+            13.5,
+            pal.colors.text_icon,
+            scale,
+        );
+        self.hits.push((copy_name_r, ControlHit::CopyPresetName));
+
+        let save_rect = Rect::new(copy_name_r.x + copy_name_r.w + 7.0, row_y, save_w, 26.0);
         UiRenderer::fill_rounded_rect(pixmap, save_rect, 6.0, pal.colors.accent, scale);
         renderer.draw_text(
             pixmap,
@@ -1215,9 +1542,20 @@ impl SettingsView {
         UiRenderer::fill_rounded_rect(pixmap, preview_box, 6.0, active_color, scale);
         UiRenderer::stroke_rounded_rect(pixmap, preview_box, 6.0, 1.2, card_border, scale);
 
-        let hex_rect = Rect::new(info_x + 66.0, *y + 100.0, (info_w - 66.0).min(130.0), 28.0);
+        let hex_rect = Rect::new(info_x + 66.0, *y + 100.0, (info_w - 102.0).min(126.0), 28.0);
         let hex_focused = self.focused_field == Some(FocusedField::HexColor);
-        UiRenderer::fill_rounded_rect(pixmap, hex_rect, 6.0, pal.colors.window_bg, scale);
+        let hex_selected = hex_focused && self.selection_all && !self.hex_input.is_empty();
+        UiRenderer::fill_rounded_rect(
+            pixmap,
+            hex_rect,
+            6.0,
+            if hex_selected {
+                pal.colors.accent.mix(pal.colors.window_bg, 0.55)
+            } else {
+                pal.colors.window_bg
+            },
+            scale,
+        );
         UiRenderer::stroke_rounded_rect(
             pixmap,
             hex_rect,
@@ -1230,7 +1568,7 @@ impl SettingsView {
             },
             scale,
         );
-        let hex_display = if hex_focused {
+        let hex_display = if hex_focused && !hex_selected {
             format!("{}|", self.hex_input)
         } else {
             self.hex_input.clone()
@@ -1247,9 +1585,22 @@ impl SettingsView {
         );
         self.hits.push((hex_rect, ControlHit::HexInput));
 
+        let copy_hex_r = Rect::new(hex_rect.x + hex_rect.w + 6.0, *y + 100.0, 28.0, 28.0);
+        UiRenderer::fill_rounded_rect(pixmap, copy_hex_r, 6.0, pal.colors.modifier_bg, scale);
+        UiRenderer::stroke_rounded_rect(pixmap, copy_hex_r, 6.0, 1.0, card_border, scale);
+        renderer.draw_icon(
+            pixmap,
+            IconId::Copy,
+            copy_hex_r,
+            13.5,
+            pal.colors.text_icon,
+            scale,
+        );
+        self.hits.push((copy_hex_r, ControlHit::CopyHex));
+
         renderer.draw_text(
             pixmap,
-            "Drag square/hue or click hex to type #RRGGBB.",
+            "Drag square/hue, click Copy, or Ctrl+C / Ctrl+V.",
             Rect::new(info_x, *y + 136.0, info_w, 26.0),
             10.5,
             400,
@@ -1260,13 +1611,13 @@ impl SettingsView {
 
         *y += color_card.h + 10.0;
 
-        // Card 4: Borders, Geometry & Typography
-        let geom_card = Rect::new(x, *y, w, 190.0);
+        // Card 4: Borders & Window Geometry (font/icon sliders moved to dedicated Sizes & Fonts tab)
+        let geom_card = Rect::new(x, *y, w, 152.0);
         UiRenderer::fill_rounded_rect(pixmap, geom_card, 10.0, card_bg, scale);
         UiRenderer::stroke_rounded_rect(pixmap, geom_card, 10.0, 1.0, card_border, scale);
         renderer.draw_text(
             pixmap,
-            "Borders, Geometry & Typography",
+            "Borders & Window Geometry",
             Rect::new(x + 12.0, *y + 8.0, 260.0, 18.0),
             12.5,
             700,
@@ -1307,26 +1658,10 @@ impl SettingsView {
             (
                 col2_x,
                 *y + 72.0,
-                SliderId::FontScale,
-                "Font Scale",
-                format!("{}%", (app.font_scale * 100.0).round() as u32),
-                (app.font_scale - 0.75) / 0.85,
-            ),
-            (
-                col1_x,
-                *y + 112.0,
                 SliderId::CornerRadius,
                 "Corner Radius",
                 format!("{} px", app.corner_radius.round() as u32),
                 app.corner_radius / 16.0,
-            ),
-            (
-                col2_x,
-                *y + 112.0,
-                SliderId::KeySpacing,
-                "Key Spacing",
-                format!("{} px", app.key_spacing.round() as u32),
-                (app.key_spacing - 1.0) / 7.0,
             ),
         ];
 
@@ -1344,59 +1679,30 @@ impl SettingsView {
             );
         }
 
-        let bot_y = *y + 154.0;
-        renderer.draw_text(
+        let bot_y = *y + 114.0;
+        self.draw_slider(
+            renderer,
             pixmap,
-            "Weight:",
-            Rect::new(col1_x, bot_y, 50.0, 24.0),
-            11.0,
-            500,
-            pal.muted_text,
-            TextAlign::Left,
+            state,
+            Rect::new(col1_x, bot_y - 4.0, col_w, 34.0),
+            SliderId::KeySpacing,
+            "Key Spacing",
+            &format!("{} px", app.key_spacing.round() as u32),
+            (app.key_spacing - 1.0) / 7.0,
             scale,
         );
-        for (idx, wt) in [400u16, 500, 600, 700].iter().enumerate() {
-            let wr = Rect::new(col1_x + 54.0 + idx as f32 * 40.0, bot_y, 36.0, 24.0);
-            let active = app.font_weight == *wt;
-            UiRenderer::fill_rounded_rect(
-                pixmap,
-                wr,
-                5.0,
-                if active {
-                    pal.colors.accent
-                } else {
-                    pal.colors.key_bg
-                },
-                scale,
-            );
-            renderer.draw_text(
-                pixmap,
-                &wt.to_string(),
-                wr,
-                10.5,
-                *wt,
-                if active {
-                    pal.accent_text
-                } else {
-                    pal.colors.text_icon
-                },
-                TextAlign::Center,
-                scale,
-            );
-            self.hits.push((wr, ControlHit::FontWeight(*wt)));
-        }
 
         renderer.draw_text(
             pixmap,
             "Keycap Shadow",
-            Rect::new(col2_x, bot_y, 108.0, 24.0),
+            Rect::new(col2_x, bot_y + 2.0, 108.0, 24.0),
             11.5,
             500,
             pal.colors.text_icon,
             TextAlign::Left,
             scale,
         );
-        let sh_switch = Rect::new(col2_x + 108.0, bot_y + 2.0, 40.0, 20.0);
+        let sh_switch = Rect::new(col2_x + 108.0, bot_y + 4.0, 40.0, 20.0);
         draw_toggle_pill(
             pixmap,
             sh_switch,
@@ -1408,7 +1714,7 @@ impl SettingsView {
         self.hits
             .push((sh_switch, ControlHit::Toggle(ToggleId::KeycapShadow)));
 
-        let reset_rect = Rect::new(x + w - 122.0, bot_y, 110.0, 24.0);
+        let reset_rect = Rect::new(x + w - 122.0, bot_y + 2.0, 110.0, 24.0);
         UiRenderer::fill_rounded_rect(pixmap, reset_rect, 6.0, pal.colors.modifier_bg, scale);
         UiRenderer::stroke_rounded_rect(pixmap, reset_rect, 6.0, 1.0, card_border, scale);
         renderer.draw_text(
@@ -1424,6 +1730,226 @@ impl SettingsView {
         self.hits.push((reset_rect, ControlHit::ResetDefaults));
 
         *y += geom_card.h + 10.0;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_sizes_tab(
+        &mut self,
+        renderer: &mut UiRenderer,
+        pixmap: &mut Pixmap,
+        state: &KeyboardState,
+        x: f32,
+        w: f32,
+        y: &mut f32,
+        card_bg: Color,
+        card_border: Color,
+        scale: f32,
+    ) {
+        let app = &state.config.appearance;
+        let pal = app.resolved_palette();
+        let inner_w = w - 28.0;
+
+        // Card 1: Independent Font & Label Sizes
+        let font_card = Rect::new(x, *y, w, 214.0);
+        UiRenderer::fill_rounded_rect(pixmap, font_card, 10.0, card_bg, scale);
+        UiRenderer::stroke_rounded_rect(pixmap, font_card, 10.0, 1.0, card_border, scale);
+        renderer.draw_text(
+            pixmap,
+            "Font & Label Sizes",
+            Rect::new(x + 14.0, *y + 8.0, 260.0, 20.0),
+            12.5,
+            700,
+            pal.colors.text_icon,
+            TextAlign::Left,
+            scale,
+        );
+
+        let font_sliders = [
+            (
+                *y + 34.0,
+                SliderId::LetterFontScale,
+                "Letter & Number Keys",
+                format!("{}%", (app.letter_font_scale * 100.0).round() as u32),
+                (app.letter_font_scale - 0.60) / 1.20,
+            ),
+            (
+                *y + 78.0,
+                SliderId::SubLabelScale,
+                "Shift & AltGr Sub-Labels (Corner Hints)",
+                format!("{}%", (app.sub_label_scale * 100.0).round() as u32),
+                (app.sub_label_scale - 0.60) / 1.20,
+            ),
+            (
+                *y + 122.0,
+                SliderId::ModifierFontScale,
+                "Modifier, Action & Toolbar Labels (Ctrl, Shift, ESC, EN/PL)",
+                format!("{}%", (app.modifier_font_scale * 100.0).round() as u32),
+                (app.modifier_font_scale - 0.60) / 1.20,
+            ),
+        ];
+        for (sy, id, label, value_str, frac) in font_sliders {
+            self.draw_slider(
+                renderer,
+                pixmap,
+                state,
+                Rect::new(x + 14.0, sy, inner_w, 36.0),
+                id,
+                label,
+                &value_str,
+                frac,
+                scale,
+            );
+        }
+
+        let wt_y = *y + 172.0;
+        renderer.draw_text(
+            pixmap,
+            "Font Weight:",
+            Rect::new(x + 14.0, wt_y, 86.0, 26.0),
+            11.5,
+            500,
+            pal.muted_text,
+            TextAlign::Left,
+            scale,
+        );
+        for (idx, (wt, name)) in [
+            (400u16, "400 Regular"),
+            (500u16, "500 Medium"),
+            (600u16, "600 SemiBold"),
+            (700u16, "700 Bold"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let bw = ((inner_w - 94.0) - 18.0) / 4.0;
+            let wr = Rect::new(x + 104.0 + idx as f32 * (bw + 6.0), wt_y, bw, 26.0);
+            let active = app.font_weight == *wt;
+            UiRenderer::fill_rounded_rect(
+                pixmap,
+                wr,
+                6.0,
+                if active {
+                    pal.colors.accent
+                } else {
+                    pal.colors.key_bg
+                },
+                scale,
+            );
+            renderer.draw_text(
+                pixmap,
+                name,
+                wr,
+                10.5,
+                *wt,
+                if active {
+                    pal.accent_text
+                } else {
+                    pal.colors.text_icon
+                },
+                TextAlign::Center,
+                scale,
+            );
+            self.hits.push((wr, ControlHit::FontWeight(*wt)));
+        }
+
+        *y += font_card.h + 12.0;
+
+        // Card 2: Independent Icon Sizes
+        let icon_card = Rect::new(x, *y, w, 150.0);
+        UiRenderer::fill_rounded_rect(pixmap, icon_card, 10.0, card_bg, scale);
+        UiRenderer::stroke_rounded_rect(pixmap, icon_card, 10.0, 1.0, card_border, scale);
+        renderer.draw_text(
+            pixmap,
+            "Icon Sizes",
+            Rect::new(x + 14.0, *y + 8.0, 220.0, 20.0),
+            12.5,
+            700,
+            pal.colors.text_icon,
+            TextAlign::Left,
+            scale,
+        );
+
+        let icon_sliders = [
+            (
+                *y + 34.0,
+                SliderId::MediaIconScale,
+                "System & Media Controls Row Icons (Brightness, Audio, Playback)",
+                format!("{}%", (app.media_icon_scale * 100.0).round() as u32),
+                (app.media_icon_scale - 0.60) / 1.20,
+            ),
+            (
+                *y + 78.0,
+                SliderId::KeyIconScale,
+                "Keycap & Toolbar Icons (Backspace, Delete, Arrows, Symbols, Options)",
+                format!("{}%", (app.key_icon_scale * 100.0).round() as u32),
+                (app.key_icon_scale - 0.60) / 1.20,
+            ),
+        ];
+        for (sy, id, label, value_str, frac) in icon_sliders {
+            self.draw_slider(
+                renderer,
+                pixmap,
+                state,
+                Rect::new(x + 14.0, sy, inner_w, 36.0),
+                id,
+                label,
+                &value_str,
+                frac,
+                scale,
+            );
+        }
+        renderer.draw_text(
+            pixmap,
+            "Each category scales independently and clamps cleanly inside its keycap bounds.",
+            Rect::new(x + 14.0, *y + 122.0, inner_w, 18.0),
+            10.5,
+            400,
+            pal.muted_text,
+            TextAlign::Left,
+            scale,
+        );
+
+        *y += icon_card.h + 12.0;
+
+        // Card 3: Global Master Scale & Reset
+        let master_card = Rect::new(x, *y, w, 108.0);
+        UiRenderer::fill_rounded_rect(pixmap, master_card, 10.0, card_bg, scale);
+        UiRenderer::stroke_rounded_rect(pixmap, master_card, 10.0, 1.0, card_border, scale);
+        renderer.draw_text(
+            pixmap,
+            "Master Typography Scale",
+            Rect::new(x + 14.0, *y + 8.0, 260.0, 20.0),
+            12.5,
+            700,
+            pal.colors.text_icon,
+            TextAlign::Left,
+            scale,
+        );
+        self.draw_slider(
+            renderer,
+            pixmap,
+            state,
+            Rect::new(x + 14.0, *y + 34.0, inner_w, 36.0),
+            SliderId::FontScale,
+            "Overall Text Multiplier",
+            &format!("{}%", (app.font_scale * 100.0).round() as u32),
+            (app.font_scale - 0.75) / 0.85,
+            scale,
+        );
+        let reset_sz_r = Rect::new(x + w - 184.0, *y + 72.0, 170.0, 26.0);
+        UiRenderer::fill_rounded_rect(pixmap, reset_sz_r, 6.0, pal.colors.modifier_bg, scale);
+        UiRenderer::stroke_rounded_rect(pixmap, reset_sz_r, 6.0, 1.0, card_border, scale);
+        renderer.draw_text(
+            pixmap,
+            "Reset All Sizes to 100%",
+            reset_sz_r,
+            11.0,
+            600,
+            pal.colors.text_icon,
+            TextAlign::Center,
+            scale,
+        );
+        self.hits.push((reset_sz_r, ControlHit::ResetSizes));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1478,6 +2004,22 @@ impl SettingsView {
             scale,
         );
         self.hits.push((editor_btn, ControlHit::OpenPanelEditor));
+
+        let panels_dir_btn = Rect::new(editor_btn.x - 36.0, *y + 6.0, 28.0, 26.0);
+        UiRenderer::fill_rounded_rect(pixmap, panels_dir_btn, 7.0, pal.colors.modifier_bg, scale);
+        UiRenderer::stroke_rounded_rect(pixmap, panels_dir_btn, 7.0, 1.0, card_border, scale);
+        renderer.draw_icon(
+            pixmap,
+            IconId::Folder,
+            panels_dir_btn,
+            13.5,
+            pal.colors.text_icon,
+            scale,
+        );
+        self.hits.push((
+            panels_dir_btn,
+            ControlHit::OpenFolder(AppConfig::panels_dir()),
+        ));
 
         // Panel selector pills
         let mut px = x + 14.0;
@@ -2215,14 +2757,14 @@ impl SettingsView {
         );
         *y += beh_card.h + 10.0;
 
-        // Card 2: Wayland & Lockscreen Diagnostics + 1-Click Lockscreen Setup
-        let diag_card = Rect::new(x, *y, w, 220.0);
+        // Card 2: Display, KDE Lockscreen & SDDM Login Screen (1-Click Safe Setup)
+        let diag_card = Rect::new(x, *y, w, 224.0);
         UiRenderer::fill_rounded_rect(pixmap, diag_card, 10.0, card_bg, scale);
         UiRenderer::stroke_rounded_rect(pixmap, diag_card, 10.0, 1.0, card_border, scale);
         renderer.draw_text(
             pixmap,
-            "Wayland, KDE Lockscreen & SDDM Login Screen",
-            Rect::new(x + 14.0, *y + 8.0, 380.0, 20.0),
+            "Display, KDE Lockscreen & SDDM Login Screen",
+            Rect::new(x + 14.0, *y + 8.0, 420.0, 20.0),
             12.5,
             700,
             pal.colors.text_icon,
@@ -2231,22 +2773,17 @@ impl SettingsView {
         );
 
         let lock_summary = self.kde_lockscreen_status.summary();
+        let sddm_summary = if self.kde_lockscreen_status.sddm_configured {
+            "Enabled (/etc/sddm.conf.d/70-wlboard.conf)"
+        } else {
+            "Not enabled — click Enable SDDM Login below (GUI admin prompt)"
+        };
         let rows = [
+            ("Display:", self.display_backend_label.as_str()),
             ("Input Backend:", state.input_backend_status.as_str()),
             ("Layout Sync:", state.layout_sync_status.as_str()),
-            (
-                "Wayland Layer:",
-                if state.input_method_mode {
-                    "zwp_input_panel_v1 (Lockscreen / Input Method Mode)"
-                } else {
-                    "zwlr_layer_shell_v1 (Floating Non-Focus-Stealing Overlay)"
-                },
-            ),
             ("Lockscreen:", lock_summary.as_str()),
-            (
-                "SDDM Login:",
-                "sudo /usr/share/wlboard/scripts/setup-sddm.sh (re-run after v0.3.0)",
-            ),
+            ("SDDM Login:", sddm_summary),
         ];
         for (idx, (k, v)) in rows.iter().enumerate() {
             let ry = *y + 34.0 + idx as f32 * 25.0;
@@ -2272,42 +2809,101 @@ impl SettingsView {
             );
         }
 
-        // 1-Click KDE Lockscreen enable button (writes kwinrc + KWIN_IM_SHOW_ALWAYS=1 for mouse lockscreen)
-        let btn_y = *y + 174.0;
-        let enable_r = Rect::new(x + 14.0, btn_y, 286.0, 30.0);
-        UiRenderer::fill_rounded_rect(pixmap, enable_r, 7.0, pal.colors.accent, scale);
-        renderer.draw_text(
-            pixmap,
-            "Enable KDE Lockscreen (Mouse + Touch)",
-            enable_r,
-            11.0,
-            700,
-            pal.accent_text,
-            TextAlign::Center,
-            scale,
-        );
-        self.hits.push((enable_r, ControlHit::EnableKdeLockscreen));
-
-        if self.kde_lockscreen_status.kwin_show_always {
-            let dis_r = Rect::new(enable_r.x + enable_r.w + 10.0, btn_y, 168.0, 30.0);
-            UiRenderer::fill_rounded_rect(pixmap, dis_r, 7.0, pal.colors.modifier_bg, scale);
-            UiRenderer::stroke_rounded_rect(pixmap, dis_r, 7.0, 1.0, card_border, scale);
+        // 1-Click Safe & Reversible Lockscreen + SDDM controls
+        let btn_y = *y + 176.0;
+        let mut bx = x + 14.0;
+        if !self.kde_lockscreen_status.kwin_im_configured
+            || !self.kde_lockscreen_status.kwin_show_always
+        {
+            let enable_r = Rect::new(bx, btn_y, 204.0, 30.0);
+            UiRenderer::fill_rounded_rect(pixmap, enable_r, 7.0, pal.colors.accent, scale);
             renderer.draw_text(
                 pixmap,
-                "Switch to Touch-Only",
-                dis_r,
+                "Enable KDE Lockscreen",
+                enable_r,
+                11.0,
+                700,
+                pal.accent_text,
+                TextAlign::Center,
+                scale,
+            );
+            self.hits.push((enable_r, ControlHit::EnableKdeLockscreen));
+            bx += enable_r.w + 8.0;
+        } else {
+            let dis_lock_r = Rect::new(bx, btn_y, 166.0, 30.0);
+            UiRenderer::fill_rounded_rect(pixmap, dis_lock_r, 7.0, pal.colors.modifier_bg, scale);
+            UiRenderer::stroke_rounded_rect(pixmap, dis_lock_r, 7.0, 1.0, card_border, scale);
+            renderer.draw_text(
+                pixmap,
+                "Disable Lockscreen",
+                dis_lock_r,
                 11.0,
                 600,
                 pal.colors.text_icon,
                 TextAlign::Center,
                 scale,
             );
-            self.hits.push((dis_r, ControlHit::DisableKdeMouseOverride));
+            self.hits
+                .push((dis_lock_r, ControlHit::DisableKdeLockscreen));
+            bx += dis_lock_r.w + 8.0;
+        }
+
+        if !self.kde_lockscreen_status.sddm_configured {
+            let en_sddm_r = Rect::new(bx, btn_y, 178.0, 30.0);
+            UiRenderer::fill_rounded_rect(pixmap, en_sddm_r, 7.0, pal.colors.accent, scale);
+            renderer.draw_text(
+                pixmap,
+                "Enable SDDM Login",
+                en_sddm_r,
+                11.0,
+                700,
+                pal.accent_text,
+                TextAlign::Center,
+                scale,
+            );
+            self.hits.push((en_sddm_r, ControlHit::EnableSddm));
+            bx += en_sddm_r.w + 8.0;
+        } else {
+            let dis_sddm_r = Rect::new(bx, btn_y, 166.0, 30.0);
+            UiRenderer::fill_rounded_rect(pixmap, dis_sddm_r, 7.0, pal.colors.modifier_bg, scale);
+            UiRenderer::stroke_rounded_rect(pixmap, dis_sddm_r, 7.0, 1.0, card_border, scale);
+            renderer.draw_text(
+                pixmap,
+                "Disable SDDM Login",
+                dis_sddm_r,
+                11.0,
+                600,
+                pal.colors.text_icon,
+                TextAlign::Center,
+                scale,
+            );
+            self.hits.push((dis_sddm_r, ControlHit::DisableSddm));
+            bx += dis_sddm_r.w + 8.0;
+        }
+
+        if self.kde_lockscreen_status.kwin_im_configured
+            && self.kde_lockscreen_status.kwin_show_always
+        {
+            let touch_r = Rect::new(bx, btn_y, 108.0, 30.0);
+            UiRenderer::fill_rounded_rect(pixmap, touch_r, 7.0, pal.colors.modifier_bg, scale);
+            UiRenderer::stroke_rounded_rect(pixmap, touch_r, 7.0, 1.0, card_border, scale);
+            renderer.draw_text(
+                pixmap,
+                "Touch-Only",
+                touch_r,
+                11.0,
+                600,
+                pal.colors.text_icon,
+                TextAlign::Center,
+                scale,
+            );
+            self.hits
+                .push((touch_r, ControlHit::DisableKdeMouseOverride));
         }
 
         *y += diag_card.h + 10.0;
 
-        // Card 3: About & Quit
+        // Card 3: About, Config Folder & Quit
         let about_card = Rect::new(x, *y, w, 114.0);
         UiRenderer::fill_rounded_rect(pixmap, about_card, 10.0, card_bg, scale);
         UiRenderer::stroke_rounded_rect(pixmap, about_card, 10.0, 1.0, card_border, scale);
@@ -2323,9 +2919,9 @@ impl SettingsView {
         );
         renderer.draw_text(
             pixmap,
-            "wlboard v0.3.0 — Native Wayland virtual keyboard, 28 languages & Panel Editor in Rust",
+            "wlboard v0.4.0 — Native Wayland & X11 virtual keyboard, 28 languages & Panel Editor in Rust",
             Rect::new(x + 14.0, *y + 32.0, w - 28.0, 20.0),
-            11.5,
+            11.2,
             500,
             pal.colors.text_icon,
             TextAlign::Left,
@@ -2341,6 +2937,35 @@ impl SettingsView {
             TextAlign::Left,
             scale,
         );
+
+        let open_cfg_r = Rect::new(x + 14.0, *y + 76.0, 152.0, 28.0);
+        UiRenderer::fill_rounded_rect(pixmap, open_cfg_r, 7.0, pal.colors.modifier_bg, scale);
+        UiRenderer::stroke_rounded_rect(pixmap, open_cfg_r, 7.0, 1.0, card_border, scale);
+        renderer.draw_icon(
+            pixmap,
+            IconId::Folder,
+            Rect::new(open_cfg_r.x + 10.0, open_cfg_r.y, 16.0, open_cfg_r.h),
+            13.5,
+            pal.colors.text_icon,
+            scale,
+        );
+        renderer.draw_text(
+            pixmap,
+            "Open Config Folder",
+            Rect::new(
+                open_cfg_r.x + 28.0,
+                open_cfg_r.y,
+                open_cfg_r.w - 34.0,
+                open_cfg_r.h,
+            ),
+            11.0,
+            600,
+            pal.colors.text_icon,
+            TextAlign::Center,
+            scale,
+        );
+        self.hits
+            .push((open_cfg_r, ControlHit::OpenFolder(AppConfig::config_dir())));
 
         let quit_rect = Rect::new(x + w - 134.0, *y + 76.0, 120.0, 28.0);
         let danger = Color::rgb(0xDC, 0x26, 0x26);

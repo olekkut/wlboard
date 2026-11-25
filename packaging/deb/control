@@ -1,5 +1,5 @@
 Package: wlboard
-Version: 0.3.0-1
+Version: 0.4.0-1
 Section: utils
 Priority: optional
 Architecture: amd64
@@ -7,12 +7,12 @@ Maintainer: Aleksander Kutycki <74899889+olekkut@users.noreply.github.com>
 Homepage: https://github.com/olekkut/wlboard
 Depends: libc6 (>= 2.35)
 Recommends: fonts-dejavu-core | fonts-noto-core
-Description: Lightweight, customizable native Wayland virtual keyboard & panel editor
- wlboard is a native Wayland on-screen virtual keyboard written in Rust with
- dual-mode operation: floating desktop overlay (zwlr_layer_shell_v1) plus
- native Wayland input-method mode (zwp_input_method_v1 / zwp_input_panel_v1)
- for KDE Plasma Lockscreen and SDDM login screen support. Includes a built-in
- visual Panel Editor with 0.5-unit snap grid, Inverted-T half-height arrows,
- forward Delete, searchable 28-language catalog with Add/Delete management and
- automatic KDE layout registration, monochrome SVG symbol mode, 4 starter
- panels, live HSV theming, and saveable JSON User Presets.
+Description: Lightweight, customizable native Wayland & X11 virtual keyboard & panel editor
+ wlboard is a zero-idle-wakeup on-screen virtual keyboard written in Rust with
+ native Wayland floating overlay (zwlr_layer_shell_v1), automatic pure-Rust
+ XWayland/X11 non-focus-stealing fallback for Ubuntu GNOME and X11 desktops,
+ and smart single-keyboard Wayland input-method mode (zwp_input_method_v1 /
+ zwp_input_panel_v1) for KDE Plasma Lockscreen and SDDM login screen. Includes
+ a built-in visual Panel Editor (0.5u snap grid), granular Sizes & Fonts
+ scaling, clipboard copy/paste and file-manager folder shortcuts, searchable
+ 28-language catalog, monochrome SVG symbol mode, and JSON User Presets.

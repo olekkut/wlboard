@@ -48,7 +48,7 @@ pub struct KeyboardViewLayout {
     pub lang_buttons: Vec<ToolbarButton>,
     pub panel_switcher_rect: Option<Rect>,
     pub panel_switcher_label: String,
-    pub options_rect: Rect,
+    pub options_rect: Option<Rect>,
     pub hide_rect: Rect,
     pub keys: Vec<PositionedKey>,
     pub resize_grip_rect: Rect,
@@ -79,16 +79,26 @@ impl KeyboardViewLayout {
         let esc_w = (btn_h * 1.65).clamp(42.0, 56.0);
         let esc_rect = Rect::new(header_rect.x, btn_y, esc_w, btn_h);
 
-        // Right: Hide icon button + Options button
+        // Right: Hide icon button + optional Options button (hidden on Lockscreen / SDDM)
         let hide_w = btn_h;
         let hide_rect = Rect::new(header_rect.x + header_rect.w - hide_w, btn_y, hide_w, btn_h);
-        let options_w = if width >= 540.0 { 92.0 } else { btn_h + 6.0 };
-        let options_rect = Rect::new(hide_rect.x - options_w - 6.0, btn_y, options_w, btn_h);
+        let options_rect = if state.input_method_mode {
+            None
+        } else {
+            let options_w = if width >= 540.0 { 92.0 } else { btn_h + 6.0 };
+            Some(Rect::new(
+                hide_rect.x - options_w - 6.0,
+                btn_y,
+                options_w,
+                btn_h,
+            ))
+        };
 
         // Customizable Fast Language Switcher pills (respecting user's visible_languages + order!)
         let mut lang_buttons = Vec::new();
         let mut cursor_x = esc_rect.x + esc_rect.w + 8.0;
-        let max_left_x = options_rect.x - 16.0;
+        let right_anchor_x = options_rect.map(|r| r.x).unwrap_or(hide_rect.x);
+        let max_left_x = right_anchor_x - 16.0;
 
         if state.config.layout.show_fast_switcher {
             let pill_w = (btn_h * 1.25).clamp(32.0, 44.0);
@@ -232,7 +242,9 @@ impl KeyboardViewLayout {
         {
             return Some(KeyboardHit::ToolbarPanelCycle);
         }
-        if self.options_rect.contains(p) {
+        if let Some(or) = self.options_rect
+            && or.contains(p)
+        {
             return Some(KeyboardHit::ToolbarOptions);
         }
         if self.hide_rect.contains(p) {
@@ -293,7 +305,7 @@ impl KeyboardViewLayout {
             .map(|r| r.x + r.w)
             .or_else(|| self.lang_buttons.last().map(|b| b.rect.x + b.rect.w))
             .unwrap_or(self.esc_rect.x + self.esc_rect.w);
-        let right_occupied = self.options_rect.x;
+        let right_occupied = self.options_rect.map(|r| r.x).unwrap_or(self.hide_rect.x);
         if right_occupied - left_occupied > drag_pill_w + 20.0 {
             let cx = (left_occupied + right_occupied) * 0.5;
             let cy = self.header_rect.y + self.header_rect.h * 0.5;
@@ -313,7 +325,12 @@ impl KeyboardViewLayout {
 
         // 3. Top toolbar buttons: ESC, Fast Language Switcher, Panel Switcher, Options, Hide
         let tb_radius = (app.corner_radius * 0.8).clamp(4.0, 10.0);
-        let tb_font = (self.esc_rect.h * 0.44 * app.font_scale).clamp(10.0, 15.0);
+        let mod_scale = app.font_scale * app.modifier_font_scale;
+        let letter_scale = app.font_scale * app.letter_font_scale;
+        let sub_scale = app.font_scale * app.sub_label_scale;
+        let tb_font = (self.esc_rect.h * 0.44 * mod_scale).clamp(9.0, 18.0);
+        let tb_icon_max = (self.hide_rect.h - 6.0).max(12.0);
+        let tb_icon_sz = (14.5 * app.key_icon_scale).clamp(10.0, tb_icon_max);
 
         // ESC pill
         let esc_pressed = state.touches.is_key_pressed("TOOLBAR_ESC");
@@ -428,13 +445,20 @@ impl KeyboardViewLayout {
                 scale,
             );
             let icon_box = Rect::new(pr.x + 6.0, pr.y, 16.0, pr.h);
-            renderer.draw_icon(pixmap, IconId::Panels, icon_box, 13.5, fg, scale);
+            renderer.draw_icon(
+                pixmap,
+                IconId::Panels,
+                icon_box,
+                (13.5 * app.key_icon_scale).clamp(10.0, tb_icon_max),
+                fg,
+                scale,
+            );
             let lbl_box = Rect::new(pr.x + 23.0, pr.y, pr.w - 28.0, pr.h);
             renderer.draw_text(
                 pixmap,
                 &self.panel_switcher_label,
                 lbl_box,
-                (tb_font * 0.94).clamp(10.0, 14.0),
+                (tb_font * 0.94).clamp(9.0, 16.0),
                 500,
                 fg,
                 TextAlign::Center,
@@ -442,68 +466,73 @@ impl KeyboardViewLayout {
             );
         }
 
-        // Options button
-        let opt_hovered = matches!(hovered_toolbar, Some(KeyboardHit::ToolbarOptions));
-        let opt_bg = if state.settings_open {
-            pal.colors.accent
-        } else if opt_hovered {
-            pal.modifier_hover
-        } else {
-            pal.colors.modifier_bg
-        };
-        let opt_fg = if state.settings_open {
-            pal.accent_text
-        } else {
-            pal.colors.text_icon
-        };
-        UiRenderer::fill_rounded_rect(
-            pixmap,
-            self.options_rect,
-            tb_radius,
-            opt_bg.with_alpha(alpha),
-            scale,
-        );
-        UiRenderer::stroke_rounded_rect(
-            pixmap,
-            self.options_rect,
-            tb_radius,
-            app.key_border_width.min(1.5),
-            pal.colors.key_border.with_alpha(0.75 * alpha),
-            scale,
-        );
-        if self.options_rect.w >= 70.0 {
-            let icon_box = Rect::new(
-                self.options_rect.x + 6.0,
-                self.options_rect.y,
-                18.0,
-                self.options_rect.h,
-            );
-            renderer.draw_icon(pixmap, IconId::Settings, icon_box, 14.5, opt_fg, scale);
-            let label_box = Rect::new(
-                self.options_rect.x + 24.0,
-                self.options_rect.y,
-                self.options_rect.w - 30.0,
-                self.options_rect.h,
-            );
-            renderer.draw_text(
+        // Options button (desktop overlay only — hidden on Lockscreen / SDDM)
+        if let Some(options_rect) = self.options_rect {
+            let opt_hovered = matches!(hovered_toolbar, Some(KeyboardHit::ToolbarOptions));
+            let opt_bg = if state.settings_open {
+                pal.colors.accent
+            } else if opt_hovered {
+                pal.modifier_hover
+            } else {
+                pal.colors.modifier_bg
+            };
+            let opt_fg = if state.settings_open {
+                pal.accent_text
+            } else {
+                pal.colors.text_icon
+            };
+            UiRenderer::fill_rounded_rect(
                 pixmap,
-                "Options",
-                label_box,
-                tb_font,
-                500,
-                opt_fg,
-                TextAlign::Center,
+                options_rect,
+                tb_radius,
+                opt_bg.with_alpha(alpha),
                 scale,
             );
-        } else {
-            renderer.draw_icon(
+            UiRenderer::stroke_rounded_rect(
                 pixmap,
-                IconId::Settings,
-                self.options_rect,
-                15.0,
-                opt_fg,
+                options_rect,
+                tb_radius,
+                app.key_border_width.min(1.5),
+                pal.colors.key_border.with_alpha(0.75 * alpha),
                 scale,
             );
+            if options_rect.w >= 70.0 {
+                let icon_box =
+                    Rect::new(options_rect.x + 6.0, options_rect.y, 18.0, options_rect.h);
+                renderer.draw_icon(
+                    pixmap,
+                    IconId::Settings,
+                    icon_box,
+                    tb_icon_sz,
+                    opt_fg,
+                    scale,
+                );
+                let label_box = Rect::new(
+                    options_rect.x + 24.0,
+                    options_rect.y,
+                    options_rect.w - 30.0,
+                    options_rect.h,
+                );
+                renderer.draw_text(
+                    pixmap,
+                    "Options",
+                    label_box,
+                    tb_font,
+                    500,
+                    opt_fg,
+                    TextAlign::Center,
+                    scale,
+                );
+            } else {
+                renderer.draw_icon(
+                    pixmap,
+                    IconId::Settings,
+                    options_rect,
+                    tb_icon_sz,
+                    opt_fg,
+                    scale,
+                );
+            }
         }
 
         // Hide button
@@ -532,7 +561,7 @@ impl KeyboardViewLayout {
             pixmap,
             IconId::Close,
             self.hide_rect,
-            14.5,
+            tb_icon_sz,
             pal.colors.text_icon,
             scale,
         );
@@ -649,30 +678,39 @@ impl KeyboardViewLayout {
                 spec.icon
             };
             if let Some(icon_id) = chosen_icon {
-                let icon_size = (rect.h * 0.56 * app.font_scale).clamp(11.0, 22.0);
+                let cat_scale = if spec.role == KeyRole::Media {
+                    app.media_icon_scale
+                } else {
+                    app.key_icon_scale
+                };
+                let max_fit = (rect.h.min(rect.w) - 4.0).max(10.0);
+                let icon_size = (rect.h * 0.54 * cat_scale).clamp(9.0, max_fit.min(36.0));
                 renderer.draw_icon(pixmap, icon_id, rect, icon_size, fg, scale);
                 continue;
             }
 
-            let base_ratio = match spec.role {
+            let (base_ratio, cat_font_scale) = match spec.role {
                 KeyRole::Character => {
                     let base = if is_compact { 0.44 } else { 0.38 };
-                    if is_rtl && resolved.is_alphabetic {
+                    let r = if is_rtl && resolved.is_alphabetic {
                         base * 1.24
                     } else {
                         base
-                    }
+                    };
+                    (r, letter_scale)
                 }
-                KeyRole::Space => 0.28,
+                KeyRole::Space => (0.28, mod_scale),
                 KeyRole::Modifier(_) | KeyRole::Action | KeyRole::LayerToggle | KeyRole::Media => {
-                    if resolved.normal.chars().count() <= 2 {
+                    let r = if resolved.normal.chars().count() <= 2 {
                         0.36
                     } else {
                         0.28
-                    }
+                    };
+                    (r, mod_scale)
                 }
             };
-            let font_size = (rect.h * base_ratio * app.font_scale).clamp(9.5, 32.0);
+            let max_font = (rect.h * 0.78).max(11.0);
+            let font_size = (rect.h * base_ratio * cat_font_scale).clamp(8.5, max_font.min(40.0));
             let weight = if spec.role == KeyRole::Space {
                 400
             } else {
@@ -714,7 +752,8 @@ impl KeyboardViewLayout {
                     let is_altgr_hint =
                         resolved.has_altgr && !altgr && state.config.layout.altgr_amber_hints;
                     if is_altgr_hint || !resolved.is_alphabetic {
-                        let hint_size = (font_size * 0.56).clamp(8.5, 13.5);
+                        let base_hint = rect.h * 0.22 * sub_scale;
+                        let hint_size = base_hint.clamp(7.5, (rect.h * 0.36).clamp(10.0, 18.0));
                         let hint_color = if is_altgr_hint {
                             pal.altgr_amber
                         } else {
@@ -752,7 +791,7 @@ impl KeyboardViewLayout {
                         rect.w - 6.0,
                         rect.h * 0.46,
                     ),
-                    (font_size * 1.02).clamp(10.5, 16.0),
+                    (font_size * 1.02).clamp(9.5, 20.0),
                     600,
                     fg,
                     TextAlign::Center,
@@ -767,7 +806,7 @@ impl KeyboardViewLayout {
                         rect.w - 6.0,
                         rect.h * 0.34,
                     ),
-                    (font_size * 0.72).clamp(8.5, 12.0),
+                    (rect.h * 0.22 * sub_scale).clamp(8.0, 15.0),
                     400,
                     if is_pressed {
                         pal.accent_text.with_alpha(0.85)

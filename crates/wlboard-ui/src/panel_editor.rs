@@ -1,6 +1,8 @@
 //! Dedicated 3-pane visual **Panel Editor** (`960×590` resizable `xdg_toplevel` window)
 //! with a 0.5-unit snap-grid canvas, drag-to-move, drag-to-resize, and full Key Inspector.
 
+use std::path::PathBuf;
+
 use tiny_skia::Pixmap;
 use wlboard_core::{
     ACCENT_SWATCHES, Color, CompactPage, GridKeyAction, GridKeySpec, IconId, KeyCode, KeyRole,
@@ -107,7 +109,7 @@ pub enum EditorField {
     SnippetText,
 }
 
-/// Actions emitted by `PanelEditorView` back to the Wayland runtime.
+/// Actions emitted by `PanelEditorView` back to the runtime.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PanelEditorAction {
     None,
@@ -115,6 +117,8 @@ pub enum PanelEditorAction {
     /// User pressed an empty header or chrome region — initiate native compositor window move.
     StartWindowMove,
     PanelsChanged,
+    CopyText(String),
+    OpenFolder(PathBuf),
     CloseEditor,
 }
 
@@ -136,6 +140,7 @@ enum EditorHit {
     AddKey,
     DeleteKey,
     ResetBuiltin,
+    OpenPanelsFolder,
     NewPanel,
     DuplicatePanel,
     DeletePanel,
@@ -165,6 +170,7 @@ pub struct PanelEditorView {
     pub editing_panel: PanelDefinition,
     pub selected_key_idx: Option<usize>,
     pub focused_field: Option<EditorField>,
+    pub selection_all: bool,
     pub status_message: Option<String>,
     canvas_rect: Rect,
     drag: Option<CanvasDrag>,
@@ -182,6 +188,7 @@ impl PanelEditorView {
             editing_panel: panel,
             selected_key_idx: selected,
             focused_field: None,
+            selection_all: false,
             status_message: None,
             canvas_rect: Rect::default(),
             drag: None,
@@ -193,6 +200,7 @@ impl PanelEditorView {
         self.selected_key_idx = if panel.keys.is_empty() { None } else { Some(0) };
         self.editing_panel = panel;
         self.focused_field = None;
+        self.selection_all = false;
         self.drag = None;
     }
 
@@ -238,15 +246,21 @@ impl PanelEditorView {
 
         let Some(hit) = hit else {
             self.focused_field = None;
+            self.selection_all = false;
             if !self.canvas_rect.contains(p) {
                 return PanelEditorAction::StartWindowMove;
             }
             return PanelEditorAction::Redraw;
         };
         self.status_message = None;
+        self.selection_all = false;
 
         match hit {
             EditorHit::CloseButton => PanelEditorAction::CloseEditor,
+            EditorHit::OpenPanelsFolder => {
+                self.status_message = Some(format!("Opened {}", panel_store.dir().display()));
+                PanelEditorAction::OpenFolder(panel_store.dir().to_path_buf())
+            }
             EditorHit::SelectPanel(id) => {
                 if let Some(found) = state.panels.iter().find(|p| p.id == id).cloned() {
                     let resolved =
@@ -639,10 +653,13 @@ impl PanelEditorView {
     }
 
     /// Feed raw evdev keyboard input into the focused inline field (`PanelName`, `KeyLabel`, `SnippetText`).
+    /// Supports `Ctrl+A` (Select All), `Ctrl+C` (Copy), `Ctrl+X` (Cut), and `Ctrl+V` (Paste).
     pub fn handle_key_input(
         &mut self,
         code: KeyCode,
         shift: bool,
+        ctrl: bool,
+        clipboard_text: Option<&str>,
         state: &mut KeyboardState,
         panel_store: &PanelStore,
     ) -> PanelEditorAction {
@@ -663,12 +680,119 @@ impl PanelEditorView {
             return PanelEditorAction::None;
         };
 
+        if ctrl {
+            match code {
+                KeyCode::A => {
+                    self.selection_all = true;
+                    return PanelEditorAction::Redraw;
+                }
+                KeyCode::C => {
+                    let current = self.focused_field_text(field).map(ToOwned::to_owned);
+                    if let Some(txt) = current
+                        && !txt.is_empty()
+                    {
+                        self.status_message = Some(format!("Copied \"{txt}\" to clipboard"));
+                        return PanelEditorAction::CopyText(txt);
+                    }
+                    return PanelEditorAction::None;
+                }
+                KeyCode::X => {
+                    let copied = self
+                        .focused_field_text(field)
+                        .unwrap_or_default()
+                        .to_owned();
+                    if let Some(buf) = self.focused_field_mut(field) {
+                        buf.clear();
+                    }
+                    self.selection_all = false;
+                    let _ = self.save_current(state, panel_store);
+                    if !copied.is_empty() {
+                        self.status_message = Some(format!("Cut \"{copied}\" to clipboard"));
+                        return PanelEditorAction::CopyText(copied);
+                    }
+                    return PanelEditorAction::PanelsChanged;
+                }
+                KeyCode::V => {
+                    if let Some(clip) = clipboard_text {
+                        let clear_first = self.selection_all;
+                        if let Some(buf) = self.focused_field_mut(field) {
+                            if clear_first {
+                                buf.clear();
+                            }
+                            for ch in clip.chars() {
+                                if buf.len() >= 48 {
+                                    break;
+                                }
+                                if !ch.is_control() {
+                                    buf.push(ch);
+                                }
+                            }
+                        }
+                        self.selection_all = false;
+                        return self.save_current(state, panel_store);
+                    }
+                    return PanelEditorAction::None;
+                }
+                _ => return PanelEditorAction::None,
+            }
+        }
+
         if code == KeyCode::ESC || code == KeyCode::ENTER {
             self.focused_field = None;
+            self.selection_all = false;
             return self.save_current(state, panel_store);
         }
 
-        let target: Option<&mut String> = match field {
+        let clear_first = self.selection_all;
+        let Some(buf) = self.focused_field_mut(field) else {
+            return PanelEditorAction::None;
+        };
+
+        if code == KeyCode::BACKSPACE {
+            if clear_first {
+                buf.clear();
+            } else {
+                buf.pop();
+            }
+            self.selection_all = false;
+            return self.save_current(state, panel_store);
+        }
+        if let Some(ch) = evdev_to_ascii(code, shift) {
+            if clear_first {
+                buf.clear();
+            }
+            if buf.len() < 48 {
+                buf.push(ch);
+            }
+            self.selection_all = false;
+            return self.save_current(state, panel_store);
+        }
+        PanelEditorAction::None
+    }
+
+    fn focused_field_text(&self, field: EditorField) -> Option<&str> {
+        match field {
+            EditorField::PanelName => Some(self.editing_panel.name.as_str()),
+            EditorField::KeyLabel => self
+                .selected_key_idx
+                .and_then(|i| self.editing_panel.keys.get(i))
+                .map(|k| k.label.as_str()),
+            EditorField::KeyShiftLabel => self
+                .selected_key_idx
+                .and_then(|i| self.editing_panel.keys.get(i))
+                .map(|k| k.shift_label.as_str()),
+            EditorField::SnippetText => self
+                .selected_key_idx
+                .and_then(|i| self.editing_panel.keys.get(i))
+                .and_then(|k| match &k.action {
+                    GridKeyAction::TextSnippet { text } => Some(text.as_str()),
+                    _ => None,
+                }),
+        }
+    }
+
+    fn focused_field_mut(&mut self, field: EditorField) -> Option<&mut String> {
+        match field {
             EditorField::PanelName => Some(&mut self.editing_panel.name),
             EditorField::KeyLabel => self
                 .selected_key_idx
@@ -685,23 +809,7 @@ impl PanelEditorView {
                     GridKeyAction::TextSnippet { text } => Some(text),
                     _ => None,
                 }),
-        };
-
-        let Some(buf) = target else {
-            return PanelEditorAction::None;
-        };
-
-        if code == KeyCode::BACKSPACE {
-            buf.pop();
-            return self.save_current(state, panel_store);
         }
-        if let Some(ch) = evdev_to_ascii(code, shift)
-            && buf.len() < 48
-        {
-            buf.push(ch);
-            return self.save_current(state, panel_store);
-        }
-        PanelEditorAction::None
     }
 
     /// Render the complete 3-pane **Panel Editor** window into `pixmap` at HiDPI `scale`.
@@ -901,7 +1009,7 @@ impl PanelEditorView {
         renderer.draw_text(
             pixmap,
             "Panels",
-            Rect::new(left_rect.x + 12.0, left_rect.y + 10.0, 80.0, 20.0),
+            Rect::new(left_rect.x + 10.0, left_rect.y + 10.0, 56.0, 20.0),
             12.5,
             700,
             pal.colors.text_icon,
@@ -909,10 +1017,27 @@ impl PanelEditorView {
             scale,
         );
 
-        let new_p_rect = Rect::new(
-            left_rect.x + left_rect.w - 68.0,
+        let folder_p_rect = Rect::new(
+            left_rect.x + left_rect.w - 92.0,
             left_rect.y + 8.0,
-            26.0,
+            24.0,
+            24.0,
+        );
+        UiRenderer::fill_rounded_rect(pixmap, folder_p_rect, 6.0, pal.colors.key_bg, scale);
+        renderer.draw_icon(
+            pixmap,
+            IconId::Folder,
+            folder_p_rect,
+            13.0,
+            pal.colors.text_icon,
+            scale,
+        );
+        self.hits.push((folder_p_rect, EditorHit::OpenPanelsFolder));
+
+        let new_p_rect = Rect::new(
+            left_rect.x + left_rect.w - 64.0,
+            left_rect.y + 8.0,
+            24.0,
             24.0,
         );
         UiRenderer::fill_rounded_rect(pixmap, new_p_rect, 6.0, pal.colors.accent, scale);
@@ -927,9 +1052,9 @@ impl PanelEditorView {
         self.hits.push((new_p_rect, EditorHit::NewPanel));
 
         let dup_p_rect = Rect::new(
-            left_rect.x + left_rect.w - 36.0,
+            left_rect.x + left_rect.w - 34.0,
             left_rect.y + 8.0,
-            26.0,
+            24.0,
             24.0,
         );
         UiRenderer::fill_rounded_rect(pixmap, dup_p_rect, 6.0, pal.colors.key_bg, scale);
@@ -1004,6 +1129,15 @@ impl PanelEditorView {
         let pname_r = Rect::new(left_rect.x + 10.0, cfg_y + 26.0, left_rect.w - 20.0, 24.0);
         let pname_foc = self.focused_field == Some(EditorField::PanelName);
         UiRenderer::fill_rounded_rect(pixmap, pname_r, 5.0, pal.colors.window_bg, scale);
+        if pname_foc && self.selection_all && !self.editing_panel.name.is_empty() {
+            UiRenderer::fill_rounded_rect(
+                pixmap,
+                pname_r.inset(3.0),
+                3.0,
+                pal.colors.accent.with_alpha(0.32),
+                scale,
+            );
+        }
         UiRenderer::stroke_rounded_rect(
             pixmap,
             pname_r,
@@ -1012,7 +1146,7 @@ impl PanelEditorView {
             if pname_foc { pal.colors.accent } else { border },
             scale,
         );
-        let pname_txt = if pname_foc {
+        let pname_txt = if pname_foc && !self.selection_all {
             format!("{}|", self.editing_panel.name)
         } else {
             self.editing_panel.name.clone()
@@ -1812,6 +1946,15 @@ impl PanelEditorView {
         );
         let r = Rect::new(x, y + 18.0, w, 24.0);
         UiRenderer::fill_rounded_rect(pixmap, r, 5.0, pal.colors.window_bg, scale);
+        if focused && self.selection_all && !value.is_empty() {
+            UiRenderer::fill_rounded_rect(
+                pixmap,
+                r.inset(3.0),
+                3.0,
+                pal.colors.accent.with_alpha(0.32),
+                scale,
+            );
+        }
         UiRenderer::stroke_rounded_rect(
             pixmap,
             r,
@@ -1820,7 +1963,7 @@ impl PanelEditorView {
             if focused { pal.colors.accent } else { border },
             scale,
         );
-        let (disp, fg) = if focused {
+        let (disp, fg) = if focused && !self.selection_all {
             (format!("{value}|"), pal.colors.text_icon)
         } else if value.is_empty() {
             if let Some(ph) = placeholder {

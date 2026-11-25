@@ -88,6 +88,11 @@ pub trait InputBackend: Send {
 
     fn release_all(&mut self) -> Result<(), InputError>;
 
+    /// Returns true if any virtual key is currently tracked as pressed on this backend.
+    fn has_held_keys(&self) -> bool {
+        false
+    }
+
     fn watchdog_tick(&mut self, active_held: &[KeyCode], now: Instant)
     -> Result<usize, InputError>;
 }
@@ -244,6 +249,15 @@ impl InputManager {
             let _ = im.release_all();
         }
         let _ = self.backend.release_all();
+    }
+
+    #[must_use]
+    pub fn has_held_keys(&self) -> bool {
+        if let Some(ref im) = self.im_backend {
+            im.has_held_keys()
+        } else {
+            self.backend.has_held_keys()
+        }
     }
 
     pub fn watchdog_tick(&mut self, active_held: &[KeyCode], now: Instant) -> usize {
