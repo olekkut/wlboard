@@ -6,6 +6,7 @@ VERSION="0.1.0-1"
 ARCH="amd64"
 PKG_NAME="wlboard_${VERSION}_${ARCH}.deb"
 STAGE_DIR="$(mktemp -d)"
+chmod 755 "${STAGE_DIR}"
 
 trap 'rm -rf "${STAGE_DIR}"' EXIT
 
