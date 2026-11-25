@@ -4,18 +4,25 @@ pub mod config;
 pub mod keycode;
 pub mod layout;
 pub mod modifiers;
+pub mod panel;
 pub mod presets;
 pub mod state;
 pub mod theme;
 pub mod touch;
 
-pub use config::{AppConfig, BehaviorSettings, LayoutSettings, WindowGeometry};
+pub use config::{AppConfig, BehaviorSettings, KeycapStyle, LayoutSettings, WindowGeometry};
 pub use keycode::{IconId, KeyCode, KeyRole, ModifierKind};
 pub use layout::{
     BUILTIN_LAYOUT_CODES, CompactPage, KeyAction, KeySpec, KeyboardStyle, LayoutDefinition,
     LayoutRegistry, media_control_row,
 };
 pub use modifiers::{ModifierLevel, ModifierTracker};
+pub use panel::{
+    GridKeyAction, GridKeySpec, PANEL_COMPACT_TV, PANEL_NUMPAD_NAV, PANEL_SHORTCUTS_MEDIA,
+    PANEL_STANDARD, PanelDefinition, PanelError, PanelStore, ResolvedGridKey,
+    build_compact_tv_panel, build_numpad_nav_panel, build_shortcuts_media_panel,
+    build_standard_panel,
+};
 pub use presets::{PresetError, PresetStore, UserPreset};
 pub use state::{InputCommand, KeyboardState};
 pub use theme::{

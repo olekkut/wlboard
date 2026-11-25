@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use tracing::{debug, info};
-use wlboard_core::{BUILTIN_LAYOUT_CODES, KeyboardStyle};
+use wlboard_core::{BUILTIN_LAYOUT_CODES, KeyboardStyle, PANEL_STANDARD};
 use zbus::wire::{ObjectPath, OwnedVariant, Variant};
 use zbus::{Connection, interface, proxy};
 
@@ -13,15 +13,16 @@ use crate::PlatformEvent;
 pub const SNI_OBJECT_PATH: &str = "/StatusNotifierItem";
 pub const MENU_OBJECT_PATH: &str = "/MenuBar";
 
-/// Menu item IDs shared between `GetLayout` and `Event`.
 const MENU_ROOT: i32 = 0;
 const MENU_TOGGLE_VISIBLE: i32 = 1;
 const MENU_OPEN_SETTINGS: i32 = 2;
-const MENU_TOGGLE_COMPACT: i32 = 3;
-const MENU_LAYOUT_SUBMENU: i32 = 4;
-const MENU_SEPARATOR: i32 = 5;
-const MENU_QUIT: i32 = 6;
+const MENU_OPEN_PANEL_EDITOR: i32 = 3;
+const MENU_PANELS_SUBMENU: i32 = 4;
+const MENU_LAYOUT_SUBMENU: i32 = 5;
+const MENU_SEPARATOR: i32 = 6;
+const MENU_QUIT: i32 = 7;
 const MENU_LAYOUT_BASE: i32 = 100;
+const MENU_PANEL_BASE: i32 = 200;
 
 /// Snapshot of state reflected in the system tray menu.
 #[derive(Debug, Clone)]
@@ -29,6 +30,8 @@ pub struct TrayState {
     pub visible: bool,
     pub style: KeyboardStyle,
     pub active_layout: String,
+    pub active_panel: String,
+    pub panels: Vec<(String, String)>,
     pub revision: u32,
 }
 
@@ -38,6 +41,8 @@ impl Default for TrayState {
             visible: true,
             style: KeyboardStyle::Standard,
             active_layout: "en".to_owned(),
+            active_panel: PANEL_STANDARD.to_owned(),
+            panels: vec![("standard".to_owned(), "Standard".to_owned())],
             revision: 1,
         }
     }
@@ -195,15 +200,34 @@ impl DbusMenu {
         p_settings.insert("enabled".to_owned(), Self::prop_bool(true));
         p_settings.insert("visible".to_owned(), Self::prop_bool(true));
 
-        let mut p_compact = HashMap::new();
-        p_compact.insert("label".to_owned(), Self::prop_str("Compact for TV"));
-        p_compact.insert("toggle-type".to_owned(), Self::prop_str("checkmark"));
-        p_compact.insert(
-            "toggle-state".to_owned(),
-            Self::prop_i32(i32::from(snapshot.style == KeyboardStyle::CompactTv)),
-        );
-        p_compact.insert("enabled".to_owned(), Self::prop_bool(true));
-        p_compact.insert("visible".to_owned(), Self::prop_bool(true));
+        let mut p_editor = HashMap::new();
+        p_editor.insert("label".to_owned(), Self::prop_str("Panel Editor..."));
+        p_editor.insert("enabled".to_owned(), Self::prop_bool(true));
+        p_editor.insert("visible".to_owned(), Self::prop_bool(true));
+
+        let panel_children: Vec<OwnedVariant> = snapshot
+            .panels
+            .iter()
+            .enumerate()
+            .map(|(idx, (id, name))| {
+                let mut pp = HashMap::new();
+                pp.insert("label".to_owned(), Self::prop_str(name));
+                pp.insert("toggle-type".to_owned(), Self::prop_str("radio"));
+                pp.insert(
+                    "toggle-state".to_owned(),
+                    Self::prop_i32(i32::from(snapshot.active_panel == *id)),
+                );
+                pp.insert("enabled".to_owned(), Self::prop_bool(true));
+                pp.insert("visible".to_owned(), Self::prop_bool(true));
+                Self::item_value(MENU_PANEL_BASE + idx as i32, pp, Vec::new())
+            })
+            .collect();
+
+        let mut p_panels = HashMap::new();
+        p_panels.insert("label".to_owned(), Self::prop_str("Panels"));
+        p_panels.insert("children-display".to_owned(), Self::prop_str("submenu"));
+        p_panels.insert("enabled".to_owned(), Self::prop_bool(true));
+        p_panels.insert("visible".to_owned(), Self::prop_bool(true));
 
         let layout_labels = [
             ("en", "English (EN)"),
@@ -250,7 +274,8 @@ impl DbusMenu {
         let children = vec![
             Self::item_value(MENU_TOGGLE_VISIBLE, p_toggle, Vec::new()),
             Self::item_value(MENU_OPEN_SETTINGS, p_settings, Vec::new()),
-            Self::item_value(MENU_TOGGLE_COMPACT, p_compact, Vec::new()),
+            Self::item_value(MENU_OPEN_PANEL_EDITOR, p_editor, Vec::new()),
+            Self::item_value(MENU_PANELS_SUBMENU, p_panels, panel_children),
             Self::item_value(MENU_LAYOUT_SUBMENU, p_layouts, layout_children),
             Self::item_value(MENU_SEPARATOR, p_sep, Vec::new()),
             Self::item_value(MENU_QUIT, p_quit, Vec::new()),
@@ -305,12 +330,23 @@ impl DbusMenu {
         match id {
             MENU_TOGGLE_VISIBLE => (self.on_event)(PlatformEvent::ToggleVisible),
             MENU_OPEN_SETTINGS => (self.on_event)(PlatformEvent::OpenSettings),
-            MENU_TOGGLE_COMPACT => (self.on_event)(PlatformEvent::ToggleCompactStyle),
+            MENU_OPEN_PANEL_EDITOR => (self.on_event)(PlatformEvent::OpenPanelEditor),
             MENU_QUIT => (self.on_event)(PlatformEvent::Quit),
-            n if n >= MENU_LAYOUT_BASE => {
+            n if (MENU_LAYOUT_BASE..MENU_PANEL_BASE).contains(&n) => {
                 let idx = (n - MENU_LAYOUT_BASE) as usize;
                 if let Some(code) = BUILTIN_LAYOUT_CODES.get(idx) {
                     (self.on_event)(PlatformEvent::SetLayout((*code).to_owned()));
+                }
+            }
+            n if n >= MENU_PANEL_BASE => {
+                let idx = (n - MENU_PANEL_BASE) as usize;
+                let panel_id = self
+                    .state
+                    .lock()
+                    .ok()
+                    .and_then(|s| s.panels.get(idx).map(|(id, _)| id.clone()));
+                if let Some(pid) = panel_id {
+                    (self.on_event)(PlatformEvent::SetPanel(pid));
                 }
             }
             _ => {}
@@ -358,7 +394,6 @@ fn build_tray_icon_argb32() -> (i32, i32, Vec<u8>) {
         }
     };
 
-    // Draw dark rounded chassis (2..22, 4..20) with crisp white 1px outer frame
     for y in 4..20 {
         for x in 2..22 {
             let corner = (x == 2 || x == 21) && (y == 4 || y == 19);
@@ -374,7 +409,6 @@ fn build_tray_icon_argb32() -> (i32, i32, Vec<u8>) {
         }
     }
 
-    // Two rows of subtle light keycap blocks
     for &ky in &[7, 11] {
         for kx in [5, 9, 13, 17] {
             for dy in 0..2 {
@@ -385,10 +419,9 @@ fn build_tray_icon_argb32() -> (i32, i32, Vec<u8>) {
         }
     }
 
-    // Cobalt blue accent spacebar
     for y in 15..17 {
         for x in 6..18 {
-            set_px(x, y, 255, 0x2F, 0x81, 0xF7);
+            set_px(x, y, 255, 0x25, 0x63, 0xEB);
         }
     }
 

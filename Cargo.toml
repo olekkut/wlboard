@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Aleksander Kutycki <74899889+olekkut@users.noreply.github.com>"]
 license = "GPL-3.0-or-later"
@@ -35,6 +35,7 @@ futures-lite = "2.6"
 calloop = "0.14"
 smithay-client-toolkit = { version = "0.21", default-features = false, features = ["calloop"] }
 wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 cosmic-text = "0.19"

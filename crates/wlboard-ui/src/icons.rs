@@ -19,6 +19,24 @@ pub const fn svg_template(id: IconId) -> &'static str {
         IconId::Backspace => {
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 5H9l-6 7 6 7h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1Z"/><line x1="17.5" y1="9.5" x2="12.5" y2="14.5"/><line x1="12.5" y1="9.5" x2="17.5" y2="14.5"/></svg>"##
         }
+        IconId::ForwardDelete => {
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h12l6 7-6 7H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z"/><line x1="6.5" y1="9.5" x2="11.5" y2="14.5"/><line x1="11.5" y1="9.5" x2="6.5" y2="14.5"/></svg>"##
+        }
+        IconId::Tab => {
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="12" x2="16.5" y2="12"/><polyline points="12,7.5 16.5,12 12,16.5"/><line x1="20" y1="6.5" x2="20" y2="17.5"/></svg>"##
+        }
+        IconId::CapsLock => {
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12,4 5,12 9,12 9,16 15,16 15,12 19,12"/><line x1="8" y1="20" x2="16" y2="20"/></svg>"##
+        }
+        IconId::Shift => {
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12,4.5 4.5,13 9,13 9,19.5 15,19.5 15,13 19.5,13"/></svg>"##
+        }
+        IconId::Return => {
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9,10 5,14 9,18"/><path d="M19 6v6a2 2 0 0 1-2 2H5"/></svg>"##
+        }
+        IconId::SuperKey => {
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6.5" height="6.5" rx="1.2"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.2"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.2"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.2"/></svg>"##
+        }
         IconId::Close => {
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>"##
         }
@@ -26,16 +44,16 @@ pub const fn svg_template(id: IconId) -> &'static str {
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2" stroke-linecap="round"><line x1="20" y1="9" x2="9" y2="20"/><line x1="20" y1="14.5" x2="14.5" y2="20"/><line x1="20" y1="20" x2="19.5" y2="20"/></svg>"##
         }
         IconId::ArrowUp => {
-            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6,15 12,9 18,15"/></svg>"##
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6,15 12,9 18,15"/></svg>"##
         }
         IconId::ArrowDown => {
-            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6,9 12,15 18,9"/></svg>"##
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6,9 12,15 18,9"/></svg>"##
         }
         IconId::ArrowLeft => {
-            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,6 9,12 15,18"/></svg>"##
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,6 9,12 15,18"/></svg>"##
         }
         IconId::ArrowRight => {
-            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9,6 15,12 9,18"/></svg>"##
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9,6 15,12 9,18"/></svg>"##
         }
         IconId::BrightnessDown => {
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.4"/><line x1="12" y1="4.5" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="19.5"/><line x1="4.5" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="19.5" y2="12"/><line x1="6.7" y1="6.7" x2="7.8" y2="7.8"/><line x1="16.2" y1="16.2" x2="17.3" y2="17.3"/><line x1="17.3" y1="6.7" x2="16.2" y2="7.8"/><line x1="7.8" y1="16.2" x2="6.7" y2="17.3"/></svg>"##
@@ -64,6 +82,18 @@ pub const fn svg_template(id: IconId) -> &'static str {
         IconId::Screenshot => {
             r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 8.5V6.5a2 2 0 0 1 2-2h2"/><path d="M15.5 4.5h2a2 2 0 0 1 2 2v2"/><path d="M19.5 15.5v2a2 2 0 0 1-2 2h-2"/><path d="M8.5 19.5h-2a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/></svg>"##
         }
+        IconId::Panels => {
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/><line x1="9" y1="12" x2="21" y2="12"/></svg>"##
+        }
+        IconId::Plus => {
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>"##
+        }
+        IconId::Trash => {
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,6 5,6 21,6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>"##
+        }
+        IconId::Copy => {
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>"##
+        }
     }
 }
 
@@ -89,7 +119,7 @@ impl IconCache {
         let key = (id, size_px, packed_color);
 
         if !self.entries.contains_key(&key) {
-            if self.entries.len() > 256 {
+            if self.entries.len() > 384 {
                 self.entries.clear();
             }
             let hex = color.to_hex();
@@ -121,6 +151,12 @@ mod tests {
             IconId::Menu,
             IconId::Settings,
             IconId::Backspace,
+            IconId::ForwardDelete,
+            IconId::Tab,
+            IconId::CapsLock,
+            IconId::Shift,
+            IconId::Return,
+            IconId::SuperKey,
             IconId::Close,
             IconId::ResizeGrip,
             IconId::ArrowUp,
@@ -136,6 +172,10 @@ mod tests {
             IconId::AudioLow,
             IconId::AudioHigh,
             IconId::Screenshot,
+            IconId::Panels,
+            IconId::Plus,
+            IconId::Trash,
+            IconId::Copy,
         ];
         for id in all {
             let pm = cache

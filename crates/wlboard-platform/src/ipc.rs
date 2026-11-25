@@ -1,4 +1,5 @@
-//! Single-instance D-Bus IPC (`io.github.olekkut.wlboard`) powering `wlboard --toggle` and `--settings`.
+//! Single-instance D-Bus IPC (`io.github.olekkut.wlboard`) powering
+//! `wlboard --toggle`, `--settings`, `--panel-editor`, and `--panel`.
 
 use zbus::{Connection, interface, proxy};
 
@@ -15,7 +16,9 @@ pub enum IpcCommand {
     Show,
     Hide,
     OpenSettings,
+    OpenPanelEditor,
     SetLayout(String),
+    SetPanel(String),
     Quit,
 }
 
@@ -49,8 +52,16 @@ impl WlboardIpcService {
         (self.on_event)(PlatformEvent::OpenSettings);
     }
 
+    fn open_panel_editor(&self) {
+        (self.on_event)(PlatformEvent::OpenPanelEditor);
+    }
+
     fn set_layout(&self, code: &str) {
         (self.on_event)(PlatformEvent::SetLayout(code.to_owned()));
+    }
+
+    fn set_panel(&self, panel_id: &str) {
+        (self.on_event)(PlatformEvent::SetPanel(panel_id.to_owned()));
     }
 
     fn quit(&self) {
@@ -68,13 +79,13 @@ trait WlboardIpcClient {
     fn show(&self) -> zbus::Result<()>;
     fn hide(&self) -> zbus::Result<()>;
     fn open_settings(&self) -> zbus::Result<()>;
+    fn open_panel_editor(&self) -> zbus::Result<()>;
     fn set_layout(&self, code: &str) -> zbus::Result<()>;
+    fn set_panel(&self, panel_id: &str) -> zbus::Result<()>;
     fn quit(&self) -> zbus::Result<()>;
 }
 
 /// Try forwarding a CLI command to an already-running `wlboard` instance.
-///
-/// Returns `Ok(true)` if an existing instance handled the command, `Ok(false)` if none is running.
 pub fn try_send_ipc_command(cmd: IpcCommand) -> zbus::Result<bool> {
     futures_lite::future::block_on(async move {
         let conn = Connection::session().await?;
@@ -84,7 +95,9 @@ pub fn try_send_ipc_command(cmd: IpcCommand) -> zbus::Result<bool> {
             IpcCommand::Show => proxy.show().await,
             IpcCommand::Hide => proxy.hide().await,
             IpcCommand::OpenSettings => proxy.open_settings().await,
+            IpcCommand::OpenPanelEditor => proxy.open_panel_editor().await,
             IpcCommand::SetLayout(code) => proxy.set_layout(&code).await,
+            IpcCommand::SetPanel(panel_id) => proxy.set_panel(&panel_id).await,
             IpcCommand::Quit => proxy.quit().await,
         };
         match res {

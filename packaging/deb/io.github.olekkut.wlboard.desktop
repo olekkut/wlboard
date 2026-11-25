@@ -10,11 +10,15 @@ Categories=Utility;Accessibility;
 Keywords=keyboard;virtual;wayland;touch;osk;tv;
 StartupNotify=false
 StartupWMClass=io.github.olekkut.wlboard
-Actions=Settings;Quit;
+Actions=Settings;PanelEditor;Quit;
 
 [Desktop Action Settings]
 Name=Customize wlboard
 Exec=/usr/bin/wlboard --settings
+
+[Desktop Action PanelEditor]
+Name=Panel Editor
+Exec=/usr/bin/wlboard --panel-editor
 
 [Desktop Action Quit]
 Name=Quit wlboard

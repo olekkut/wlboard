@@ -13,6 +13,7 @@ evdev.workspace = true
 zbus.workspace = true
 futures-lite.workspace = true
 wayland-client.workspace = true
+wayland-protocols.workspace = true
 wayland-protocols-misc.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

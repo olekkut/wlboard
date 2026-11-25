@@ -1,0 +1,3 @@
+#!/bin/sh
+# Dedicated launcher for Wayland input-method mode (KDE Plasma Lockscreen & SDDM).
+exec /usr/bin/wlboard --input-method "$@"

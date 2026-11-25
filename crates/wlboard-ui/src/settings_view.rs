@@ -3,14 +3,14 @@
 
 use tiny_skia::{Pixmap, Transform};
 use wlboard_core::{
-    ACCENT_SWATCHES, AppearanceSettings, Color, ColorSlot, IconId, KeyCode, KeyboardState,
-    KeyboardStyle, Point, PresetStore, Rect, ThemeBase,
+    ACCENT_SWATCHES, AppearanceSettings, BUILTIN_LAYOUT_CODES, Color, ColorSlot, IconId, KeyCode,
+    KeyboardState, KeycapStyle, Point, PresetStore, Rect, ThemeBase,
 };
 
 use crate::canvas::{TextAlign, UiRenderer};
 
-pub const SETTINGS_DEFAULT_WIDTH: u32 = 700;
-pub const SETTINGS_DEFAULT_HEIGHT: u32 = 660;
+pub const SETTINGS_DEFAULT_WIDTH: u32 = 720;
+pub const SETTINGS_DEFAULT_HEIGHT: u32 = 680;
 
 /// Active tab inside the built-in Settings window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -44,7 +44,9 @@ pub enum SliderId {
 pub enum ToggleId {
     KeycapShadow,
     SystemLayoutSync,
+    AutoRegisterKdeLayouts,
     FastSwitcher,
+    PanelSwitcher,
     MediaRow,
     AltGrAmberHints,
     StickyModifierLock,
@@ -58,11 +60,11 @@ pub enum SettingsAction {
     Redraw,
     ConfigChanged,
     LayoutChanged(String),
+    OpenPanelEditor,
     CloseSettings,
     QuitApp,
 }
 
-/// Drag state for HSV square, Hue bar, or horizontal sliders.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ActiveDrag {
     SvSquare(Rect),
@@ -70,7 +72,6 @@ enum ActiveDrag {
     Slider(SliderId, Rect),
 }
 
-/// Clickable region registered during layout/render for exact hit-testing.
 #[derive(Debug, Clone)]
 enum ControlHit {
     Tab(SettingsTab),
@@ -89,8 +90,12 @@ enum ControlHit {
     FontWeight(u16),
     Toggle(ToggleId),
     ResetDefaults,
-    StyleCard(KeyboardStyle),
+    PanelPill(String),
+    OpenPanelEditor,
+    KeycapStyle(KeycapStyle),
     LayoutCard(String),
+    ToggleVisibleLang(String),
+    MoveVisibleLang(String, isize),
     QuitButton,
 }
 
@@ -290,9 +295,17 @@ impl SettingsView {
                         state.config.layout.system_layout_sync =
                             !state.config.layout.system_layout_sync;
                     }
+                    ToggleId::AutoRegisterKdeLayouts => {
+                        state.config.layout.auto_register_kde_layouts =
+                            !state.config.layout.auto_register_kde_layouts;
+                    }
                     ToggleId::FastSwitcher => {
                         state.config.layout.show_fast_switcher =
                             !state.config.layout.show_fast_switcher;
+                    }
+                    ToggleId::PanelSwitcher => {
+                        state.config.layout.show_panel_switcher =
+                            !state.config.layout.show_panel_switcher;
                     }
                     ToggleId::MediaRow => {
                         state.config.layout.show_media_row = !state.config.layout.show_media_row;
@@ -319,8 +332,13 @@ impl SettingsView {
                 self.status_message = Some("Reset to Graphite Dark defaults".to_owned());
                 SettingsAction::ConfigChanged
             }
-            ControlHit::StyleCard(style) => {
-                state.set_style(style);
+            ControlHit::PanelPill(pid) => {
+                state.set_panel(&pid);
+                SettingsAction::ConfigChanged
+            }
+            ControlHit::OpenPanelEditor => SettingsAction::OpenPanelEditor,
+            ControlHit::KeycapStyle(style) => {
+                state.config.layout.keycap_style = style;
                 SettingsAction::ConfigChanged
             }
             ControlHit::LayoutCard(code) => {
@@ -330,11 +348,26 @@ impl SettingsView {
                     SettingsAction::Redraw
                 }
             }
+            ControlHit::ToggleVisibleLang(code) => {
+                if state.toggle_visible_language(&code) {
+                    SettingsAction::ConfigChanged
+                } else {
+                    self.status_message =
+                        Some("At least one language must remain visible".to_owned());
+                    SettingsAction::Redraw
+                }
+            }
+            ControlHit::MoveVisibleLang(code, delta) => {
+                if state.move_visible_language(&code, delta) {
+                    SettingsAction::ConfigChanged
+                } else {
+                    SettingsAction::Redraw
+                }
+            }
             ControlHit::QuitButton => SettingsAction::QuitApp,
         }
     }
 
-    /// Handle pointer motion while dragging a slider or HSV color picker.
     pub fn pointer_motion(&mut self, p: Point, state: &mut KeyboardState) -> SettingsAction {
         let Some(drag) = self.active_drag else {
             return SettingsAction::None;
@@ -351,7 +384,6 @@ impl SettingsView {
         self.active_drag = None;
     }
 
-    /// Feed a raw Linux evdev keycode (from `wl_keyboard` or `wlboard` itself) into the focused text input.
     pub fn handle_key_input(
         &mut self,
         code: KeyCode,
@@ -500,7 +532,6 @@ impl SettingsView {
         };
         let card_border = pal.colors.key_border.with_alpha(0.65);
 
-        // Background
         UiRenderer::fill_rounded_rect(
             pixmap,
             Rect::new(0.0, 0.0, w, h),
@@ -509,7 +540,6 @@ impl SettingsView {
             scale,
         );
 
-        // Header strip
         let header_h = 54.0;
         UiRenderer::fill_rounded_rect(
             pixmap,
@@ -539,7 +569,6 @@ impl SettingsView {
             scale,
         );
 
-        // Close button in top-right
         let close_rect = Rect::new(w - 40.0, 13.0, 28.0, 28.0);
         UiRenderer::fill_rounded_rect(pixmap, close_rect, 7.0, pal.colors.modifier_bg, scale);
         renderer.draw_icon(
@@ -552,10 +581,9 @@ impl SettingsView {
         );
         self.hits.push((close_rect, ControlHit::CloseButton));
 
-        // 3 Tab pills in header
         let tabs = [
             (SettingsTab::Appearance, "Appearance", 104.0),
-            (SettingsTab::Layout, "Layout", 76.0),
+            (SettingsTab::Layout, "Layout & Panels", 122.0),
             (SettingsTab::Behavior, "System", 78.0),
         ];
         let mut tx = close_rect.x - 14.0 - tabs.iter().map(|(_, _, tw)| tw + 6.0).sum::<f32>();
@@ -577,7 +605,7 @@ impl SettingsView {
                 pixmap,
                 label,
                 r,
-                12.5,
+                12.0,
                 if active { 700 } else { 500 },
                 fg,
                 TextAlign::Center,
@@ -587,7 +615,6 @@ impl SettingsView {
             tx += tw + 6.0;
         }
 
-        // Body content per tab
         let content_x = 18.0;
         let content_w = (w - 36.0).max(200.0);
         let mut y = header_h + 14.0;
@@ -634,7 +661,6 @@ impl SettingsView {
             }
         }
 
-        // Bottom subtle status feedback line (e.g., "Saved preset Midnight Cyan")
         if let Some(ref msg) = self.status_message {
             renderer.draw_text(
                 pixmap,
@@ -648,7 +674,6 @@ impl SettingsView {
             );
         }
 
-        // Crisp 1px border around window
         UiRenderer::stroke_rounded_rect(
             pixmap,
             Rect::new(0.0, 0.0, w, h),
@@ -675,7 +700,7 @@ impl SettingsView {
         let app = &state.config.appearance;
         let pal = app.resolved_palette();
 
-        // --- Card 1: My Presets ---
+        // Card 1: My Presets
         let preset_card = Rect::new(x, *y, w, 92.0);
         UiRenderer::fill_rounded_rect(pixmap, preset_card, 10.0, card_bg, scale);
         UiRenderer::stroke_rounded_rect(pixmap, preset_card, 10.0, 1.0, card_border, scale);
@@ -690,7 +715,6 @@ impl SettingsView {
             scale,
         );
 
-        // Saved presets pill bar
         let mut px = x + 12.0;
         let py = *y + 30.0;
         if state.presets.is_empty() {
@@ -743,7 +767,6 @@ impl SettingsView {
             }
         }
 
-        // Inline Preset Name Input + Save + Delete buttons
         let row_y = *y + 57.0;
         let save_w = 72.0;
         let del_w = 72.0;
@@ -823,7 +846,7 @@ impl SettingsView {
 
         *y += preset_card.h + 10.0;
 
-        // --- Card 2: Theme Base & Quick Accents ---
+        // Card 2: Theme Base & Quick Accents
         let base_card = Rect::new(x, *y, w, 92.0);
         UiRenderer::fill_rounded_rect(pixmap, base_card, 10.0, card_bg, scale);
         UiRenderer::stroke_rounded_rect(pixmap, base_card, 10.0, 1.0, card_border, scale);
@@ -875,7 +898,6 @@ impl SettingsView {
             self.hits.push((br, ControlHit::ThemeBase(base)));
         }
 
-        // Quick accent swatch row
         renderer.draw_text(
             pixmap,
             "Accent:",
@@ -906,7 +928,7 @@ impl SettingsView {
 
         *y += base_card.h + 10.0;
 
-        // --- Card 3: 7 Custom Color Slots + Inline Interactive HSV/Hex Color Picker ---
+        // Card 3: 7 Custom Color Slots + Inline HSV/Hex Picker
         let color_card = Rect::new(x, *y, w, 174.0);
         UiRenderer::fill_rounded_rect(pixmap, color_card, 10.0, card_bg, scale);
         UiRenderer::stroke_rounded_rect(pixmap, color_card, 10.0, 1.0, card_border, scale);
@@ -969,7 +991,6 @@ impl SettingsView {
             self.hits.push((sr, ControlHit::ColorSlotChip(slot)));
         }
 
-        // Inline HSV SV-Square + Hue Spectrum Bar + Hex Editor
         let sv_rect = Rect::new(x + 12.0, *y + 74.0, 240.0, 68.0);
         render_hsv_sv_square(pixmap, sv_rect, self.hsv.0, scale);
         UiRenderer::stroke_rounded_rect(pixmap, sv_rect, 4.0, 1.0, card_border, scale);
@@ -1008,7 +1029,6 @@ impl SettingsView {
         );
         self.hits.push((hue_rect, ControlHit::HueBar(hue_rect)));
 
-        // Right of HSV picker: active slot info, live preview chip, and Hex input
         let info_x = sv_rect.x + sv_rect.w + 18.0;
         let info_w = (x + w - 12.0 - info_x).max(120.0);
         let active_color = app.colors.get(self.selected_slot);
@@ -1071,7 +1091,7 @@ impl SettingsView {
 
         *y += color_card.h + 10.0;
 
-        // --- Card 4: Borders, Opacity, Typography & Shadow ---
+        // Card 4: Borders, Geometry & Typography
         let geom_card = Rect::new(x, *y, w, 190.0);
         UiRenderer::fill_rounded_rect(pixmap, geom_card, 10.0, card_bg, scale);
         UiRenderer::stroke_rounded_rect(pixmap, geom_card, 10.0, 1.0, card_border, scale);
@@ -1155,7 +1175,6 @@ impl SettingsView {
             );
         }
 
-        // Bottom row: Font Weight + Keycap Shadow + Reset Defaults
         let bot_y = *y + 154.0;
         renderer.draw_text(
             pixmap,
@@ -1198,12 +1217,10 @@ impl SettingsView {
             self.hits.push((wr, ControlHit::FontWeight(*wt)));
         }
 
-        // Keycap shadow toggle
-        let sh_label = Rect::new(col2_x, bot_y, 108.0, 24.0);
         renderer.draw_text(
             pixmap,
             "Keycap Shadow",
-            sh_label,
+            Rect::new(col2_x, bot_y, 108.0, 24.0),
             11.5,
             500,
             pal.colors.text_icon,
@@ -1222,7 +1239,6 @@ impl SettingsView {
         self.hits
             .push((sh_switch, ControlHit::Toggle(ToggleId::KeycapShadow)));
 
-        // Reset defaults button
         let reset_rect = Rect::new(x + w - 122.0, bot_y, 110.0, 24.0);
         UiRenderer::fill_rounded_rect(pixmap, reset_rect, 6.0, pal.colors.modifier_bg, scale);
         UiRenderer::stroke_rounded_rect(pixmap, reset_rect, 6.0, 1.0, card_border, scale);
@@ -1256,46 +1272,58 @@ impl SettingsView {
     ) {
         let pal = state.config.appearance.resolved_palette();
 
-        // Card 1: Keyboard Style
-        let style_card = Rect::new(x, *y, w, 108.0);
-        UiRenderer::fill_rounded_rect(pixmap, style_card, 10.0, card_bg, scale);
-        UiRenderer::stroke_rounded_rect(pixmap, style_card, 10.0, 1.0, card_border, scale);
+        // --- Card 1: Panels & Keycap Label Style ---
+        let panel_card = Rect::new(x, *y, w, 128.0);
+        UiRenderer::fill_rounded_rect(pixmap, panel_card, 10.0, card_bg, scale);
+        UiRenderer::stroke_rounded_rect(pixmap, panel_card, 10.0, 1.0, card_border, scale);
+
         renderer.draw_text(
             pixmap,
-            "Keyboard Style",
-            Rect::new(x + 14.0, *y + 10.0, 200.0, 20.0),
-            13.0,
+            "Active Panel & Visual Layout Editor",
+            Rect::new(x + 14.0, *y + 10.0, 280.0, 20.0),
+            12.5,
             700,
             pal.colors.text_icon,
             TextAlign::Left,
             scale,
         );
 
-        let card_w = (w - 38.0) * 0.5;
-        let styles = [
-            (
-                KeyboardStyle::Standard,
-                "Standard Desktop",
-                "Full 5-row layout with numbers, modifiers & arrows",
-            ),
-            (
-                KeyboardStyle::CompactTv,
-                "Compact for TV",
-                "Large readable keys with ABC & 123 / F-keys / Nav pages",
-            ),
-        ];
-        for (idx, (st, title, desc)) in styles.iter().enumerate() {
-            let sr = Rect::new(
-                x + 14.0 + idx as f32 * (card_w + 10.0),
-                *y + 36.0,
-                card_w,
-                58.0,
-            );
-            let active = state.config.layout.style == *st;
+        let editor_btn = Rect::new(x + w - 198.0, *y + 8.0, 184.0, 28.0);
+        UiRenderer::fill_rounded_rect(pixmap, editor_btn, 7.0, pal.colors.accent, scale);
+        renderer.draw_icon(
+            pixmap,
+            IconId::Panels,
+            Rect::new(editor_btn.x + 10.0, editor_btn.y, 18.0, 28.0),
+            14.0,
+            pal.accent_text,
+            scale,
+        );
+        renderer.draw_text(
+            pixmap,
+            "Open Panel Editor...",
+            Rect::new(editor_btn.x + 28.0, editor_btn.y, editor_btn.w - 34.0, 28.0),
+            11.5,
+            700,
+            pal.accent_text,
+            TextAlign::Center,
+            scale,
+        );
+        self.hits.push((editor_btn, ControlHit::OpenPanelEditor));
+
+        // Panel selector pills
+        let mut px = x + 14.0;
+        let py = *y + 44.0;
+        for panel in &state.panels {
+            let pw = (panel.name.len() as f32 * 7.6 + 26.0).clamp(76.0, 158.0);
+            if px + pw > x + w - 14.0 {
+                break;
+            }
+            let pr = Rect::new(px, py, pw, 28.0);
+            let active = state.config.layout.active_panel == panel.id;
             UiRenderer::fill_rounded_rect(
                 pixmap,
-                sr,
-                8.0,
+                pr,
+                6.0,
                 if active {
                     pal.colors.accent
                 } else {
@@ -1303,66 +1331,49 @@ impl SettingsView {
                 },
                 scale,
             );
-            let fg = if active {
-                pal.accent_text
-            } else {
-                pal.colors.text_icon
-            };
-            let sub_fg = if active {
-                pal.accent_text.with_alpha(0.85)
-            } else {
-                pal.muted_text
-            };
             renderer.draw_text(
                 pixmap,
-                title,
-                Rect::new(sr.x + 12.0, sr.y + 8.0, sr.w - 24.0, 20.0),
-                12.5,
-                700,
-                fg,
-                TextAlign::Left,
+                &panel.name,
+                pr,
+                11.0,
+                if active { 700 } else { 500 },
+                if active {
+                    pal.accent_text
+                } else {
+                    pal.colors.text_icon
+                },
+                TextAlign::Center,
                 scale,
             );
-            renderer.draw_text(
-                pixmap,
-                desc,
-                Rect::new(sr.x + 12.0, sr.y + 30.0, sr.w - 24.0, 22.0),
-                10.5,
-                400,
-                sub_fg,
-                TextAlign::Left,
-                scale,
-            );
-            self.hits.push((sr, ControlHit::StyleCard(*st)));
+            self.hits
+                .push((pr, ControlHit::PanelPill(panel.id.clone())));
+            px += pw + 8.0;
         }
 
-        *y += style_card.h + 12.0;
-
-        // Card 2: Active Keyboard Layout
-        let lay_card = Rect::new(x, *y, w, 102.0);
-        UiRenderer::fill_rounded_rect(pixmap, lay_card, 10.0, card_bg, scale);
-        UiRenderer::stroke_rounded_rect(pixmap, lay_card, 10.0, 1.0, card_border, scale);
+        // Keycap Style segmented toggle (Text vs Monochrome Symbols)
+        let ks_y = *y + 86.0;
         renderer.draw_text(
             pixmap,
-            "Active Keyboard Layout",
-            Rect::new(x + 14.0, *y + 10.0, 240.0, 20.0),
-            13.0,
-            700,
+            "Modifier & Action Keycaps:",
+            Rect::new(x + 14.0, ks_y, 185.0, 28.0),
+            11.5,
+            600,
             pal.colors.text_icon,
             TextAlign::Left,
             scale,
         );
-
-        let avail = state.registry.available();
-        let lw =
-            (w - 28.0 - (avail.len().saturating_sub(1) as f32) * 8.0) / avail.len().max(1) as f32;
-        for (idx, def) in avail.iter().enumerate() {
-            let lr = Rect::new(x + 14.0 + idx as f32 * (lw + 8.0), *y + 36.0, lw, 52.0);
-            let active = state.config.layout.active == def.code;
+        let styles = [
+            (KeycapStyle::Text, "Text Labels (Tab, Shift, Del)"),
+            (KeycapStyle::Symbols, "Monochrome SVG Symbols"),
+        ];
+        let sw_w = (w - 220.0) * 0.5;
+        for (idx, (st, lbl)) in styles.iter().enumerate() {
+            let r = Rect::new(x + 204.0 + idx as f32 * (sw_w + 8.0), ks_y, sw_w, 28.0);
+            let active = state.config.layout.keycap_style == *st;
             UiRenderer::fill_rounded_rect(
                 pixmap,
-                lr,
-                8.0,
+                r,
+                6.0,
                 if active {
                     pal.colors.accent
                 } else {
@@ -1370,7 +1381,66 @@ impl SettingsView {
                 },
                 scale,
             );
-            let fg = if active {
+            renderer.draw_text(
+                pixmap,
+                lbl,
+                r,
+                11.0,
+                if active { 700 } else { 500 },
+                if active {
+                    pal.accent_text
+                } else {
+                    pal.colors.text_icon
+                },
+                TextAlign::Center,
+                scale,
+            );
+            self.hits.push((r, ControlHit::KeycapStyle(*st)));
+        }
+
+        *y += panel_card.h + 10.0;
+
+        // --- Card 2: Customizable Fast Language Switcher (Show/Hide & Reorder) ---
+        let lang_card = Rect::new(x, *y, w, 152.0);
+        UiRenderer::fill_rounded_rect(pixmap, lang_card, 10.0, card_bg, scale);
+        UiRenderer::stroke_rounded_rect(pixmap, lang_card, 10.0, 1.0, card_border, scale);
+        renderer.draw_text(
+            pixmap,
+            "Fast Language Switcher (Select Active & Visible Languages)",
+            Rect::new(x + 14.0, *y + 10.0, w - 28.0, 18.0),
+            12.5,
+            700,
+            pal.colors.text_icon,
+            TextAlign::Left,
+            scale,
+        );
+
+        let lw = (w - 28.0 - 4.0 * 8.0) / 5.0;
+        for (idx, code) in BUILTIN_LAYOUT_CODES.iter().enumerate() {
+            let def = state.registry.get(code);
+            let lx = x + 14.0 + idx as f32 * (lw + 8.0);
+            let is_active = state.config.layout.active == def.code;
+            let is_visible = state
+                .config
+                .layout
+                .visible_languages
+                .iter()
+                .any(|c| c == &def.code);
+
+            // Top card selects active language
+            let top_r = Rect::new(lx, *y + 34.0, lw, 48.0);
+            UiRenderer::fill_rounded_rect(
+                pixmap,
+                top_r,
+                7.0,
+                if is_active {
+                    pal.colors.accent
+                } else {
+                    pal.colors.key_bg
+                },
+                scale,
+            );
+            let fg = if is_active {
                 pal.accent_text
             } else {
                 pal.colors.text_icon
@@ -1378,8 +1448,8 @@ impl SettingsView {
             renderer.draw_text(
                 pixmap,
                 &def.short_label,
-                Rect::new(lr.x, lr.y + 7.0, lr.w, 22.0),
-                14.5,
+                Rect::new(top_r.x, top_r.y + 6.0, top_r.w, 20.0),
+                13.5,
                 700,
                 fg,
                 TextAlign::Center,
@@ -1393,10 +1463,10 @@ impl SettingsView {
             renderer.draw_text(
                 pixmap,
                 short_name,
-                Rect::new(lr.x, lr.y + 28.0, lr.w, 18.0),
-                10.5,
+                Rect::new(top_r.x, top_r.y + 26.0, top_r.w, 16.0),
+                10.0,
                 400,
-                if active {
+                if is_active {
                     pal.accent_text.with_alpha(0.88)
                 } else {
                     pal.muted_text
@@ -1405,20 +1475,124 @@ impl SettingsView {
                 scale,
             );
             self.hits
-                .push((lr, ControlHit::LayoutCard(def.code.clone())));
+                .push((top_r, ControlHit::LayoutCard(def.code.clone())));
+
+            // Bottom pill toggles visibility in top Fast Language Switcher (Shown vs Hidden)
+            let vis_r = Rect::new(lx, *y + 88.0, lw, 24.0);
+            UiRenderer::fill_rounded_rect(
+                pixmap,
+                vis_r,
+                5.0,
+                if is_visible {
+                    pal.colors.modifier_bg
+                } else {
+                    pal.colors.window_bg
+                },
+                scale,
+            );
+            UiRenderer::stroke_rounded_rect(
+                pixmap,
+                vis_r,
+                5.0,
+                1.0,
+                if is_visible {
+                    pal.colors.accent
+                } else {
+                    card_border
+                },
+                scale,
+            );
+            renderer.draw_text(
+                pixmap,
+                if is_visible { "Shown" } else { "Hidden" },
+                vis_r,
+                10.0,
+                if is_visible { 600 } else { 400 },
+                if is_visible {
+                    pal.colors.text_icon
+                } else {
+                    pal.muted_text
+                },
+                TextAlign::Center,
+                scale,
+            );
+            self.hits
+                .push((vis_r, ControlHit::ToggleVisibleLang(def.code.clone())));
         }
 
-        *y += lay_card.h + 12.0;
+        // Reorder strip showing exact live top-bar order with left/right arrows
+        let ord_y = *y + 120.0;
+        renderer.draw_text(
+            pixmap,
+            "Top-bar order:",
+            Rect::new(x + 14.0, ord_y, 92.0, 22.0),
+            10.5,
+            600,
+            pal.muted_text,
+            TextAlign::Left,
+            scale,
+        );
+        let mut ox = x + 110.0;
+        let vis_list = state.config.layout.visible_languages.clone();
+        for (pos, code) in vis_list.iter().enumerate() {
+            let short = &state.registry.get(code).short_label;
+            let pill_w = 78.0;
+            let pr = Rect::new(ox, ord_y, pill_w, 22.0);
+            UiRenderer::fill_rounded_rect(pixmap, pr, 5.0, pal.colors.modifier_bg, scale);
+            UiRenderer::stroke_rounded_rect(pixmap, pr, 5.0, 1.0, card_border, scale);
 
-        // Card 3: Toolbars & Visual Helpers
-        let tb_card = Rect::new(x, *y, w, 204.0);
+            let left_r = Rect::new(ox, ord_y, 22.0, 22.0);
+            let right_r = Rect::new(ox + pill_w - 22.0, ord_y, 22.0, 22.0);
+            let mid_r = Rect::new(ox + 22.0, ord_y, pill_w - 44.0, 22.0);
+
+            if pos > 0 {
+                renderer.draw_icon(
+                    pixmap,
+                    IconId::ArrowLeft,
+                    left_r,
+                    11.0,
+                    pal.colors.text_icon,
+                    scale,
+                );
+                self.hits
+                    .push((left_r, ControlHit::MoveVisibleLang(code.clone(), -1)));
+            }
+            renderer.draw_text(
+                pixmap,
+                short,
+                mid_r,
+                10.5,
+                700,
+                pal.colors.text_icon,
+                TextAlign::Center,
+                scale,
+            );
+            if pos + 1 < vis_list.len() {
+                renderer.draw_icon(
+                    pixmap,
+                    IconId::ArrowRight,
+                    right_r,
+                    11.0,
+                    pal.colors.text_icon,
+                    scale,
+                );
+                self.hits
+                    .push((right_r, ControlHit::MoveVisibleLang(code.clone(), 1)));
+            }
+            ox += pill_w + 8.0;
+        }
+
+        *y += lang_card.h + 10.0;
+
+        // --- Card 3: Toolbars & KDE Integration ---
+        let tb_card = Rect::new(x, *y, w, 256.0);
         UiRenderer::fill_rounded_rect(pixmap, tb_card, 10.0, card_bg, scale);
         UiRenderer::stroke_rounded_rect(pixmap, tb_card, 10.0, 1.0, card_border, scale);
         renderer.draw_text(
             pixmap,
-            "Toolbars & Visual Hints",
-            Rect::new(x + 14.0, *y + 10.0, 240.0, 20.0),
-            13.0,
+            "Toolbars & KDE Plasma Integration",
+            Rect::new(x + 14.0, *y + 10.0, 280.0, 18.0),
+            12.5,
             700,
             pal.colors.text_icon,
             TextAlign::Left,
@@ -1428,15 +1602,27 @@ impl SettingsView {
         let toggles = [
             (
                 ToggleId::SystemLayoutSync,
-                "KDE Plasma Two-Way System Layout Sync",
-                "Keep active language synchronized with Plasma desktop keyboard settings",
+                "KDE Plasma Two-Way Layout Sync",
+                "Keep active language synchronized with Plasma desktop keyboard indicator",
                 state.config.layout.system_layout_sync,
             ),
             (
+                ToggleId::AutoRegisterKdeLayouts,
+                "Auto-Add Missing Languages to KDE Settings",
+                "Automatically register unconfigured layouts in kxkbrc when switching",
+                state.config.layout.auto_register_kde_layouts,
+            ),
+            (
                 ToggleId::FastSwitcher,
-                "Fast Language Switcher Bar (EN / PL / UA / RU / AR)",
-                "Show quick language pills in the top control bar",
+                "Show Fast Language Switcher Bar",
+                "Display your selected languages in the top control bar",
                 state.config.layout.show_fast_switcher,
+            ),
+            (
+                ToggleId::PanelSwitcher,
+                "Show Panel Switcher Pill",
+                "Quick 1-click button to cycle between Standard, Compact TV, Numpad & custom panels",
+                state.config.layout.show_panel_switcher,
             ),
             (
                 ToggleId::MediaRow,
@@ -1453,12 +1639,12 @@ impl SettingsView {
         ];
 
         for (idx, (id, title, subtitle, value)) in toggles.into_iter().enumerate() {
-            let ry = *y + 38.0 + idx as f32 * 40.0;
+            let ry = *y + 34.0 + idx as f32 * 36.0;
             self.draw_toggle_row(
                 renderer,
                 pixmap,
                 state,
-                Rect::new(x + 14.0, ry, w - 28.0, 36.0),
+                Rect::new(x + 14.0, ry, w - 28.0, 34.0),
                 id,
                 title,
                 subtitle,
@@ -1467,7 +1653,7 @@ impl SettingsView {
             );
         }
 
-        *y += tb_card.h + 12.0;
+        *y += tb_card.h + 10.0;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1486,7 +1672,7 @@ impl SettingsView {
         let pal = state.config.appearance.resolved_palette();
 
         // Card 1: Typing Behavior
-        let beh_card = Rect::new(x, *y, w, 126.0);
+        let beh_card = Rect::new(x, *y, w, 124.0);
         UiRenderer::fill_rounded_rect(pixmap, beh_card, 10.0, card_bg, scale);
         UiRenderer::stroke_rounded_rect(pixmap, beh_card, 10.0, 1.0, card_border, scale);
         renderer.draw_text(
@@ -1503,7 +1689,7 @@ impl SettingsView {
             renderer,
             pixmap,
             state,
-            Rect::new(x + 14.0, *y + 38.0, w - 28.0, 38.0),
+            Rect::new(x + 14.0, *y + 36.0, w - 28.0, 38.0),
             ToggleId::StickyModifierLock,
             "Sticky Modifier Lock (Double-Tap)",
             "Double-tap Shift, Ctrl, Alt, or AltGr to lock active until tapped again",
@@ -1514,7 +1700,7 @@ impl SettingsView {
             renderer,
             pixmap,
             state,
-            Rect::new(x + 14.0, *y + 80.0, w - 28.0, 38.0),
+            Rect::new(x + 14.0, *y + 78.0, w - 28.0, 38.0),
             ToggleId::StartMinimized,
             "Start Minimized to System Tray",
             "Launch quietly into the StatusNotifier tray until toggled",
@@ -1523,14 +1709,14 @@ impl SettingsView {
         );
         *y += beh_card.h + 12.0;
 
-        // Card 2: Wayland & Input Backend Diagnostics
-        let diag_card = Rect::new(x, *y, w, 124.0);
+        // Card 2: Wayland & Lockscreen Diagnostics
+        let diag_card = Rect::new(x, *y, w, 178.0);
         UiRenderer::fill_rounded_rect(pixmap, diag_card, 10.0, card_bg, scale);
         UiRenderer::stroke_rounded_rect(pixmap, diag_card, 10.0, 1.0, card_border, scale);
         renderer.draw_text(
             pixmap,
-            "Wayland & Input Diagnostics",
-            Rect::new(x + 14.0, *y + 10.0, 260.0, 20.0),
+            "Wayland, Input & Lockscreen Integration",
+            Rect::new(x + 14.0, *y + 10.0, 340.0, 20.0),
             13.0,
             700,
             pal.colors.text_icon,
@@ -1543,7 +1729,19 @@ impl SettingsView {
             ("Layout Sync:", state.layout_sync_status.as_str()),
             (
                 "Wayland Layer:",
-                "zwlr_layer_shell_v1 (Overlay, Non-Focus-Stealing)",
+                if state.input_method_mode {
+                    "zwp_input_panel_v1 (Lockscreen / Input Method Mode)"
+                } else {
+                    "zwlr_layer_shell_v1 (Floating Non-Focus-Stealing Overlay)"
+                },
+            ),
+            (
+                "KDE Lockscreen:",
+                "System Settings -> Keyboard -> Virtual Keyboard -> wlboard",
+            ),
+            (
+                "SDDM Login:",
+                "Run /usr/share/wlboard/scripts/setup-sddm.sh (optional)",
             ),
         ];
         for (idx, (k, v)) in rows.iter().enumerate() {
@@ -1551,7 +1749,7 @@ impl SettingsView {
             renderer.draw_text(
                 pixmap,
                 k,
-                Rect::new(x + 14.0, ry, 122.0, 22.0),
+                Rect::new(x + 14.0, ry, 126.0, 22.0),
                 11.5,
                 600,
                 pal.muted_text,
@@ -1561,7 +1759,7 @@ impl SettingsView {
             renderer.draw_text(
                 pixmap,
                 v,
-                Rect::new(x + 136.0, ry, w - 150.0, 22.0),
+                Rect::new(x + 142.0, ry, w - 156.0, 22.0),
                 11.5,
                 500,
                 pal.colors.text_icon,
@@ -1587,7 +1785,7 @@ impl SettingsView {
         );
         renderer.draw_text(
             pixmap,
-            "wlboard v0.1.0 — Lightweight native Wayland floating virtual keyboard in Rust",
+            "wlboard v0.2.0 — Native Wayland floating virtual keyboard & Panel Editor in Rust",
             Rect::new(x + 14.0, *y + 36.0, w - 28.0, 20.0),
             11.5,
             500,
@@ -1690,8 +1888,8 @@ impl SettingsView {
         renderer.draw_text(
             pixmap,
             title,
-            Rect::new(rect.x, rect.y, rect.w - 58.0, 18.0),
-            12.0,
+            Rect::new(rect.x, rect.y, rect.w - 58.0, 17.0),
+            11.5,
             600,
             pal.colors.text_icon,
             TextAlign::Left,
@@ -1700,15 +1898,15 @@ impl SettingsView {
         renderer.draw_text(
             pixmap,
             subtitle,
-            Rect::new(rect.x, rect.y + 18.0, rect.w - 58.0, 16.0),
-            10.5,
+            Rect::new(rect.x, rect.y + 17.0, rect.w - 58.0, 15.0),
+            10.0,
             400,
             pal.muted_text,
             TextAlign::Left,
             scale,
         );
 
-        let switch_rect = Rect::new(rect.x + rect.w - 44.0, rect.y + 7.0, 42.0, 22.0);
+        let switch_rect = Rect::new(rect.x + rect.w - 44.0, rect.y + 6.0, 42.0, 20.0);
         draw_toggle_pill(
             pixmap,
             switch_rect,
@@ -1747,7 +1945,7 @@ fn draw_toggle_pill(
         pixmap,
         knob_x,
         knob_y,
-        (r - 3.0).max(4.0),
+        (r - 2.5).max(4.0),
         Color::rgb(255, 255, 255),
         scale,
     );
@@ -1810,8 +2008,8 @@ fn render_hsv_hue_bar(pixmap: &mut Pixmap, rect: Rect, scale: f32) {
     );
 }
 
-/// Map standard ASCII evdev keycodes for inline preset name & `#RRGGBB` hex inputs.
-fn evdev_to_ascii(code: KeyCode, shift: bool) -> Option<char> {
+/// Map standard ASCII evdev keycodes for inline text inputs across Settings and Panel Editor.
+pub(crate) fn evdev_to_ascii(code: KeyCode, shift: bool) -> Option<char> {
     let ch = match code {
         KeyCode::A => 'a',
         KeyCode::B => 'b',
@@ -1839,18 +2037,23 @@ fn evdev_to_ascii(code: KeyCode, shift: bool) -> Option<char> {
         KeyCode::X => 'x',
         KeyCode::Y => 'y',
         KeyCode::Z => 'z',
-        KeyCode::KEY_0 => '0',
-        KeyCode::KEY_1 => '1',
-        KeyCode::KEY_2 => '2',
+        KeyCode::KEY_0 => return Some(if shift { ')' } else { '0' }),
+        KeyCode::KEY_1 => return Some(if shift { '!' } else { '1' }),
+        KeyCode::KEY_2 => return Some(if shift { '@' } else { '2' }),
         KeyCode::KEY_3 => return Some(if shift { '#' } else { '3' }),
-        KeyCode::KEY_4 => '4',
-        KeyCode::KEY_5 => '5',
-        KeyCode::KEY_6 => '6',
-        KeyCode::KEY_7 => '7',
-        KeyCode::KEY_8 => '8',
-        KeyCode::KEY_9 => '9',
+        KeyCode::KEY_4 => return Some(if shift { '$' } else { '4' }),
+        KeyCode::KEY_5 => return Some(if shift { '%' } else { '5' }),
+        KeyCode::KEY_6 => return Some(if shift { '^' } else { '6' }),
+        KeyCode::KEY_7 => return Some(if shift { '&' } else { '7' }),
+        KeyCode::KEY_8 => return Some(if shift { '*' } else { '8' }),
+        KeyCode::KEY_9 => return Some(if shift { '(' } else { '9' }),
         KeyCode::SPACE => ' ',
         KeyCode::MINUS => return Some(if shift { '_' } else { '-' }),
+        KeyCode::EQUAL => return Some(if shift { '+' } else { '=' }),
+        KeyCode::COMMA => return Some(if shift { '<' } else { ',' }),
+        KeyCode::DOT => return Some(if shift { '>' } else { '.' }),
+        KeyCode::SLASH => return Some(if shift { '?' } else { '/' }),
+        KeyCode::SEMICOLON => return Some(if shift { ':' } else { ';' }),
         _ => return None,
     };
     Some(if shift && ch.is_ascii_alphabetic() {
