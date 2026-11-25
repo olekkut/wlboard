@@ -1,0 +1,66 @@
+{
+  "code": "pl",
+  "short_label": "PL",
+  "display_name": "Polish (Polski)",
+  "xkb_name": "pl",
+  "is_rtl": false,
+  "grave": { "normal": "`", "shift": "~" },
+  "digits_shift": ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "_", "+"],
+  "top_row": [
+    { "code": "KEY_Q", "normal": "q", "shift": "Q" },
+    { "code": "KEY_W", "normal": "w", "shift": "W" },
+    { "code": "KEY_E", "normal": "e", "shift": "E", "altgr": "ę", "altgr_shift": "Ę" },
+    { "code": "KEY_R", "normal": "r", "shift": "R" },
+    { "code": "KEY_T", "normal": "t", "shift": "T" },
+    { "code": "KEY_Y", "normal": "y", "shift": "Y" },
+    { "code": "KEY_U", "normal": "u", "shift": "U", "altgr": "€", "altgr_shift": "€" },
+    { "code": "KEY_I", "normal": "i", "shift": "I" },
+    { "code": "KEY_O", "normal": "o", "shift": "O", "altgr": "ó", "altgr_shift": "Ó" },
+    { "code": "KEY_P", "normal": "p", "shift": "P" },
+    { "code": "KEY_LEFTBRACE", "normal": "[", "shift": "{" },
+    { "code": "KEY_RIGHTBRACE", "normal": "]", "shift": "}" },
+    { "code": "KEY_BACKSLASH", "normal": "\\", "shift": "|" }
+  ],
+  "home_row": [
+    { "code": "KEY_A", "normal": "a", "shift": "A", "altgr": "ą", "altgr_shift": "Ą" },
+    { "code": "KEY_S", "normal": "s", "shift": "S", "altgr": "ś", "altgr_shift": "Ś" },
+    { "code": "KEY_D", "normal": "d", "shift": "D" },
+    { "code": "KEY_F", "normal": "f", "shift": "F" },
+    { "code": "KEY_G", "normal": "g", "shift": "G" },
+    { "code": "KEY_H", "normal": "h", "shift": "H" },
+    { "code": "KEY_J", "normal": "j", "shift": "J" },
+    { "code": "KEY_K", "normal": "k", "shift": "K" },
+    { "code": "KEY_L", "normal": "l", "shift": "L", "altgr": "ł", "altgr_shift": "Ł" },
+    { "code": "KEY_SEMICOLON", "normal": ";", "shift": ":" },
+    { "code": "KEY_APOSTROPHE", "normal": "'", "shift": "\"" }
+  ],
+  "bottom_row": [
+    { "code": "KEY_Z", "normal": "z", "shift": "Z", "altgr": "ż", "altgr_shift": "Ż" },
+    { "code": "KEY_X", "normal": "x", "shift": "X", "altgr": "ź", "altgr_shift": "Ź" },
+    { "code": "KEY_C", "normal": "c", "shift": "C", "altgr": "ć", "altgr_shift": "Ć" },
+    { "code": "KEY_V", "normal": "v", "shift": "V" },
+    { "code": "KEY_B", "normal": "b", "shift": "B" },
+    { "code": "KEY_N", "normal": "n", "shift": "N", "altgr": "ń", "altgr_shift": "Ń" },
+    { "code": "KEY_M", "normal": "m", "shift": "M" },
+    { "code": "KEY_COMMA", "normal": ",", "shift": "<" },
+    { "code": "KEY_DOT", "normal": ".", "shift": ">" },
+    { "code": "KEY_SLASH", "normal": "/", "shift": "?" }
+  ],
+  "compact_rows": [
+    ["KEY_Q", "KEY_W", "KEY_E", "KEY_R", "KEY_T", "KEY_Y", "KEY_U", "KEY_I", "KEY_O", "KEY_P"],
+    ["KEY_A", "KEY_S", "KEY_D", "KEY_F", "KEY_G", "KEY_H", "KEY_J", "KEY_K", "KEY_L"],
+    ["KEY_Z", "KEY_X", "KEY_C", "KEY_V", "KEY_B", "KEY_N", "KEY_M", "KEY_COMMA", "KEY_DOT"]
+  ],
+  "altgr": {
+    "KEY_A": { "normal": "ą", "shift": "Ą" },
+    "KEY_C": { "normal": "ć", "shift": "Ć" },
+    "KEY_E": { "normal": "ę", "shift": "Ę" },
+    "KEY_L": { "normal": "ł", "shift": "Ł" },
+    "KEY_N": { "normal": "ń", "shift": "Ń" },
+    "KEY_O": { "normal": "ó", "shift": "Ó" },
+    "KEY_S": { "normal": "ś", "shift": "Ś" },
+    "KEY_X": { "normal": "ź", "shift": "Ź" },
+    "KEY_Z": { "normal": "ż", "shift": "Ż" },
+    "KEY_U": { "normal": "€", "shift": "€" }
+  }
+}

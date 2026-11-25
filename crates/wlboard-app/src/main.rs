@@ -1,0 +1,128 @@
+//! `wlboard` — Lightweight, customizable native Wayland floating virtual keyboard written in Rust.
+
+use std::path::PathBuf;
+use std::process::ExitCode;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
+use clap::Parser;
+use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
+use wlboard_platform::{IpcCommand, try_send_ipc_command};
+use wlboard_ui::{generate_preview_suite, run_wayland_app};
+
+/// Lightweight, customizable native Wayland floating virtual keyboard.
+#[derive(Debug, Parser)]
+#[command(name = "wlboard", version, about, long_about = None)]
+struct Cli {
+    /// Toggle keyboard visibility on a running wlboard instance (or start if not running).
+    #[arg(long)]
+    toggle: bool,
+
+    /// Show the keyboard on a running wlboard instance (or start visible).
+    #[arg(long)]
+    show: bool,
+
+    /// Hide the keyboard on a running wlboard instance.
+    #[arg(long)]
+    hide: bool,
+
+    /// Open the built-in Customize wlboard Settings & Presets window.
+    #[arg(long)]
+    settings: bool,
+
+    /// Switch the active keyboard layout (en, pl, uk, ru, ar) on a running instance.
+    #[arg(long, value_name = "CODE")]
+    layout: Option<String>,
+
+    /// Quit a running wlboard instance cleanly.
+    #[arg(long)]
+    quit: bool,
+
+    /// Render offline visual verification PNG previews into a directory and exit.
+    #[arg(long, value_name = "DIR", hide = true)]
+    render_previews: Option<PathBuf>,
+}
+
+fn main() -> ExitCode {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("wlboard=info")),
+        )
+        .with_target(false)
+        .init();
+
+    let cli = Cli::parse();
+
+    // Headless preview generation (used for automated visual QA & screenshots)
+    if let Some(dir) = cli.render_previews {
+        return match generate_preview_suite(&dir) {
+            Ok(files) => {
+                for f in files {
+                    println!("{f}");
+                }
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                eprintln!("Failed generating previews: {err}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
+    // Forward single-instance CLI commands to an already-running wlboard instance when available.
+    if cli.quit {
+        return forward_only(IpcCommand::Quit);
+    }
+    if cli.hide {
+        return forward_only(IpcCommand::Hide);
+    }
+    if let Some(code) = cli.layout {
+        return forward_only(IpcCommand::SetLayout(code));
+    }
+    if cli.toggle {
+        match try_send_ipc_command(IpcCommand::Toggle) {
+            Ok(true) => return ExitCode::SUCCESS,
+            Ok(false) => info!("No running wlboard instance found; launching fresh instance"),
+            Err(err) => info!("IPC unavailable ({err}); launching fresh instance"),
+        }
+    } else if cli.show {
+        if let Ok(true) = try_send_ipc_command(IpcCommand::Show) {
+            return ExitCode::SUCCESS;
+        }
+    } else if cli.settings {
+        if let Ok(true) = try_send_ipc_command(IpcCommand::OpenSettings) {
+            return ExitCode::SUCCESS;
+        }
+    } else if let Ok(true) = try_send_ipc_command(IpcCommand::Show) {
+        info!("wlboard is already running — brought keyboard overlay to front");
+        return ExitCode::SUCCESS;
+    }
+
+    // Register clean SIGINT / SIGTERM handler so virtual keys are always released on exit.
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&shutdown));
+    let _ = signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&shutdown));
+
+    if let Err(err) = run_wayland_app(cli.settings, shutdown) {
+        error!("{err}");
+        eprintln!("wlboard error: {err}");
+        return ExitCode::FAILURE;
+    }
+
+    ExitCode::SUCCESS
+}
+
+fn forward_only(cmd: IpcCommand) -> ExitCode {
+    match try_send_ipc_command(cmd) {
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => {
+            eprintln!("wlboard is not currently running.");
+            ExitCode::FAILURE
+        }
+        Err(err) => {
+            eprintln!("Failed communicating with wlboard over D-Bus: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}

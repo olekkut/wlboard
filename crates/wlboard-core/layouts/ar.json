@@ -1,0 +1,55 @@
+{
+  "code": "ar",
+  "short_label": "AR",
+  "display_name": "Arabic (العربية)",
+  "xkb_name": "ara",
+  "is_rtl": true,
+  "grave": { "normal": "ذ", "shift": "ّ" },
+  "digits_shift": ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "_", "+"],
+  "top_row": [
+    { "code": "KEY_Q", "normal": "ض", "shift": "َ" },
+    { "code": "KEY_W", "normal": "ص", "shift": "ً" },
+    { "code": "KEY_E", "normal": "ث", "shift": "ُ" },
+    { "code": "KEY_R", "normal": "ق", "shift": "ٌ" },
+    { "code": "KEY_T", "normal": "ف", "shift": "لإ" },
+    { "code": "KEY_Y", "normal": "غ", "shift": "إ" },
+    { "code": "KEY_U", "normal": "ع", "shift": "‘" },
+    { "code": "KEY_I", "normal": "ه", "shift": "÷" },
+    { "code": "KEY_O", "normal": "خ", "shift": "×" },
+    { "code": "KEY_P", "normal": "ح", "shift": "؛" },
+    { "code": "KEY_LEFTBRACE", "normal": "ج", "shift": "<" },
+    { "code": "KEY_RIGHTBRACE", "normal": "د", "shift": ">" },
+    { "code": "KEY_BACKSLASH", "normal": "\\", "shift": "|" }
+  ],
+  "home_row": [
+    { "code": "KEY_A", "normal": "ش", "shift": "ِ" },
+    { "code": "KEY_S", "normal": "س", "shift": "ٍ" },
+    { "code": "KEY_D", "normal": "ي", "shift": "]" },
+    { "code": "KEY_F", "normal": "ب", "shift": "[" },
+    { "code": "KEY_G", "normal": "ل", "shift": "لأ" },
+    { "code": "KEY_H", "normal": "ا", "shift": "أ" },
+    { "code": "KEY_J", "normal": "ت", "shift": "ـ" },
+    { "code": "KEY_K", "normal": "ن", "shift": "،" },
+    { "code": "KEY_L", "normal": "م", "shift": "/" },
+    { "code": "KEY_SEMICOLON", "normal": "ك", "shift": ":" },
+    { "code": "KEY_APOSTROPHE", "normal": "ط", "shift": "\"" }
+  ],
+  "bottom_row": [
+    { "code": "KEY_Z", "normal": "ئ", "shift": "~" },
+    { "code": "KEY_X", "normal": "ء", "shift": "ْ" },
+    { "code": "KEY_C", "normal": "ؤ", "shift": "}" },
+    { "code": "KEY_V", "normal": "ر", "shift": "{" },
+    { "code": "KEY_B", "normal": "لا", "shift": "لآ" },
+    { "code": "KEY_N", "normal": "ى", "shift": "آ" },
+    { "code": "KEY_M", "normal": "ة", "shift": "’" },
+    { "code": "KEY_COMMA", "normal": "و", "shift": "," },
+    { "code": "KEY_DOT", "normal": "ز", "shift": "." },
+    { "code": "KEY_SLASH", "normal": "ظ", "shift": "؟" }
+  ],
+  "compact_rows": [
+    ["KEY_Q", "KEY_W", "KEY_E", "KEY_R", "KEY_T", "KEY_Y", "KEY_U", "KEY_I", "KEY_O", "KEY_P", "KEY_LEFTBRACE", "KEY_RIGHTBRACE"],
+    ["KEY_A", "KEY_S", "KEY_D", "KEY_F", "KEY_G", "KEY_H", "KEY_J", "KEY_K", "KEY_L", "KEY_SEMICOLON", "KEY_APOSTROPHE"],
+    ["KEY_Z", "KEY_X", "KEY_C", "KEY_V", "KEY_B", "KEY_N", "KEY_M", "KEY_COMMA", "KEY_DOT", "KEY_SLASH"]
+  ],
+  "altgr": {}
+}

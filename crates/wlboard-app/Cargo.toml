@@ -1,0 +1,22 @@
+[package]
+name = "wlboard-app"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "wlboard"
+path = "src/main.rs"
+
+[dependencies]
+wlboard-core.workspace = true
+wlboard-platform.workspace = true
+wlboard-ui.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+signal-hook.workspace = true

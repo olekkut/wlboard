@@ -1,0 +1,17 @@
+Package: wlboard
+Version: 0.1.0-1
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Aleksander Kutycki <74899889+olekkut@users.noreply.github.com>
+Homepage: https://github.com/olekkut/wlboard
+Depends: libc6 (>= 2.35)
+Recommends: fonts-dejavu-core | fonts-noto-core
+Description: Lightweight, customizable native Wayland floating virtual keyboard
+ wlboard is a native Wayland floating on-screen virtual keyboard written in
+ Rust. It uses zwlr_layer_shell_v1 so it floats on top without stealing focus
+ on KDE Plasma, Hyprland, and Sway, supports automatic zwp_virtual_keyboard_v1
+ and pure-Rust uinput key injection with a 250 ms stuck-key watchdog, multi-touch
+ chording, EN/PL/UA/RU/AR layouts, Standard and Compact for TV modes, KDE Plasma
+ D-Bus two-way layout sync, StatusNotifierItem tray, and a built-in Settings and
+ User Presets editor.

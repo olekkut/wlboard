@@ -1,0 +1,21 @@
+[Desktop Entry]
+Type=Application
+Name=wlboard
+GenericName=Virtual Keyboard
+Comment=Lightweight, customizable native Wayland floating virtual keyboard
+Exec=/usr/bin/wlboard --toggle
+Icon=io.github.olekkut.wlboard
+Terminal=false
+Categories=Utility;Accessibility;
+Keywords=keyboard;virtual;wayland;touch;osk;tv;
+StartupNotify=false
+StartupWMClass=io.github.olekkut.wlboard
+Actions=Settings;Quit;
+
+[Desktop Action Settings]
+Name=Customize wlboard
+Exec=/usr/bin/wlboard --settings
+
+[Desktop Action Quit]
+Name=Quit wlboard
+Exec=/usr/bin/wlboard --quit

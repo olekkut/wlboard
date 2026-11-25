@@ -1,0 +1,19 @@
+[package]
+name = "wlboard-platform"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+wlboard-core.workspace = true
+evdev.workspace = true
+zbus.workspace = true
+futures-lite.workspace = true
+wayland-client.workspace = true
+wayland-protocols-misc.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+libc.workspace = true

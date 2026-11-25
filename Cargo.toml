@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wlboard-core",
+    "crates/wlboard-platform",
+    "crates/wlboard-ui",
+    "crates/wlboard-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Aleksander Kutycki <74899889+olekkut@users.noreply.github.com>"]
+license = "GPL-3.0-or-later"
+repository = "https://github.com/olekkut/wlboard"
+description = "Lightweight, customizable native Wayland floating virtual keyboard written in Rust"
+rust-version = "1.89"
+
+[workspace.dependencies]
+wlboard-core = { path = "crates/wlboard-core" }
+wlboard-platform = { path = "crates/wlboard-platform" }
+wlboard-ui = { path = "crates/wlboard-ui" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "1.0"
+thiserror = "2.0"
+dirs = "7.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4.6", features = ["derive"] }
+evdev = "0.13"
+zbus = "6.5"
+futures-lite = "2.6"
+calloop = "0.14"
+smithay-client-toolkit = { version = "0.21", default-features = false, features = ["calloop"] }
+wayland-client = "0.31"
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+cosmic-text = "0.19"
+resvg = { version = "0.50", default-features = false }
+tiny-skia = "0.12"
+signal-hook = "0.4"
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"

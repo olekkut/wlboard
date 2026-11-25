@@ -1,0 +1,57 @@
+{
+  "code": "uk",
+  "short_label": "UA",
+  "display_name": "Ukrainian (Українська)",
+  "xkb_name": "ua",
+  "is_rtl": false,
+  "grave": { "normal": "'", "shift": "₴" },
+  "digits_shift": ["!", "\"", "№", ";", "%", ":", "?", "*", "(", ")", "_", "+"],
+  "top_row": [
+    { "code": "KEY_Q", "normal": "й", "shift": "Й" },
+    { "code": "KEY_W", "normal": "ц", "shift": "Ц" },
+    { "code": "KEY_E", "normal": "у", "shift": "У" },
+    { "code": "KEY_R", "normal": "к", "shift": "К" },
+    { "code": "KEY_T", "normal": "е", "shift": "Е" },
+    { "code": "KEY_Y", "normal": "н", "shift": "Н" },
+    { "code": "KEY_U", "normal": "г", "shift": "Г", "altgr": "ґ", "altgr_shift": "Ґ" },
+    { "code": "KEY_I", "normal": "ш", "shift": "Ш" },
+    { "code": "KEY_O", "normal": "щ", "shift": "Щ" },
+    { "code": "KEY_P", "normal": "з", "shift": "З" },
+    { "code": "KEY_LEFTBRACE", "normal": "х", "shift": "Х" },
+    { "code": "KEY_RIGHTBRACE", "normal": "ї", "shift": "Ї" },
+    { "code": "KEY_BACKSLASH", "normal": "ґ", "shift": "Ґ" }
+  ],
+  "home_row": [
+    { "code": "KEY_A", "normal": "ф", "shift": "Ф" },
+    { "code": "KEY_S", "normal": "і", "shift": "І" },
+    { "code": "KEY_D", "normal": "в", "shift": "В" },
+    { "code": "KEY_F", "normal": "а", "shift": "А" },
+    { "code": "KEY_G", "normal": "п", "shift": "П" },
+    { "code": "KEY_H", "normal": "р", "shift": "Р" },
+    { "code": "KEY_J", "normal": "о", "shift": "О" },
+    { "code": "KEY_K", "normal": "л", "shift": "Л" },
+    { "code": "KEY_L", "normal": "д", "shift": "Д" },
+    { "code": "KEY_SEMICOLON", "normal": "ж", "shift": "Ж" },
+    { "code": "KEY_APOSTROPHE", "normal": "є", "shift": "Є" }
+  ],
+  "bottom_row": [
+    { "code": "KEY_Z", "normal": "я", "shift": "Я" },
+    { "code": "KEY_X", "normal": "ч", "shift": "Ч" },
+    { "code": "KEY_C", "normal": "с", "shift": "С" },
+    { "code": "KEY_V", "normal": "м", "shift": "М" },
+    { "code": "KEY_B", "normal": "и", "shift": "И" },
+    { "code": "KEY_N", "normal": "т", "shift": "Т" },
+    { "code": "KEY_M", "normal": "ь", "shift": "Ь" },
+    { "code": "KEY_COMMA", "normal": "б", "shift": "Б" },
+    { "code": "KEY_DOT", "normal": "ю", "shift": "Ю" },
+    { "code": "KEY_SLASH", "normal": ".", "shift": "," }
+  ],
+  "compact_rows": [
+    ["KEY_Q", "KEY_W", "KEY_E", "KEY_R", "KEY_T", "KEY_Y", "KEY_U", "KEY_I", "KEY_O", "KEY_P", "KEY_LEFTBRACE", "KEY_RIGHTBRACE"],
+    ["KEY_A", "KEY_S", "KEY_D", "KEY_F", "KEY_G", "KEY_H", "KEY_J", "KEY_K", "KEY_L", "KEY_SEMICOLON", "KEY_APOSTROPHE"],
+    ["KEY_Z", "KEY_X", "KEY_C", "KEY_V", "KEY_B", "KEY_N", "KEY_M", "KEY_COMMA", "KEY_DOT", "KEY_SLASH"]
+  ],
+  "altgr": {
+    "KEY_U": { "normal": "ґ", "shift": "Ґ" }
+  }
+}

@@ -1,0 +1,22 @@
+[package]
+name = "wlboard-ui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+wlboard-core.workspace = true
+wlboard-platform.workspace = true
+smithay-client-toolkit.workspace = true
+wayland-client.workspace = true
+wayland-protocols-misc.workspace = true
+wayland-protocols-wlr.workspace = true
+calloop.workspace = true
+cosmic-text.workspace = true
+resvg.workspace = true
+tiny-skia.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
