@@ -6,6 +6,7 @@
 
 pub mod input;
 pub mod ipc;
+pub mod kde_setup;
 pub mod layout_sync;
 pub mod tray;
 
@@ -22,6 +23,10 @@ pub use input::{
     InputBackend, InputError, InputManager, STUCK_KEY_TIMEOUT, WaylandInputMethodBackend,
 };
 pub use ipc::{APP_BUS_NAME, APP_OBJECT_PATH, IpcCommand, try_send_ipc_command};
+pub use kde_setup::{
+    KdeLockscreenStatus, detect_kde_lockscreen_status, disable_kde_lockscreen_mouse_override,
+    enable_kde_lockscreen_support, set_kwin_input_method_in_file,
+};
 pub use layout_sync::{PlasmaLayoutSync, ensure_layout_in_kxkbrc};
 pub use tray::{EventCallback, TrayState};
 
@@ -50,6 +55,7 @@ pub enum PlatformCommand {
         active_layout: String,
         active_panel: String,
         panels: Vec<(String, String)>,
+        languages: Vec<(String, String)>,
     },
     SyncSystemLayout {
         code: String,
@@ -100,6 +106,7 @@ impl PlatformHandle {
         active_layout: String,
         active_panel: String,
         panels: Vec<(String, String)>,
+        languages: Vec<(String, String)>,
     ) {
         let _ = self.cmd_tx.send(PlatformCommand::UpdateTray {
             visible,
@@ -107,6 +114,7 @@ impl PlatformHandle {
             active_layout,
             active_panel,
             panels,
+            languages,
         });
     }
 
@@ -195,6 +203,7 @@ fn run_dbus_worker(
                     active_layout,
                     active_panel,
                     panels,
+                    languages,
                 }) => {
                     if let Ok(mut guard) = tray_state.lock() {
                         guard.visible = visible;
@@ -202,6 +211,7 @@ fn run_dbus_worker(
                         guard.active_layout = active_layout;
                         guard.active_panel = active_panel;
                         guard.panels = panels;
+                        guard.languages = languages;
                         guard.revision = guard.revision.wrapping_add(1);
                     }
                 }

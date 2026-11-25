@@ -124,11 +124,26 @@ impl KeyboardState {
         out
     }
 
-    /// Toggle whether a language appears in the top Fast Language Switcher bar (keeps at least 1 enabled).
-    pub fn toggle_visible_language(&mut self, code: &str) -> bool {
+    /// Add a language to the keyboard's active/visible language list (idempotent).
+    pub fn add_visible_language(&mut self, code: &str) -> bool {
         let Some(norm) = self.registry.normalize_code(code) else {
             return false;
         };
+        if self.config.layout.visible_languages.contains(&norm) {
+            return false;
+        }
+        self.config.layout.visible_languages.push(norm);
+        true
+    }
+
+    /// Delete/remove a language from the keyboard's active/visible language list (always keeps at least 1).
+    pub fn remove_visible_language(&mut self, code: &str) -> bool {
+        let Some(norm) = self.registry.normalize_code(code) else {
+            return false;
+        };
+        if self.config.layout.visible_languages.len() <= 1 {
+            return false;
+        }
         if let Some(pos) = self
             .config
             .layout
@@ -136,19 +151,26 @@ impl KeyboardState {
             .iter()
             .position(|c| c == &norm)
         {
-            if self.config.layout.visible_languages.len() <= 1 {
-                return false;
-            }
             self.config.layout.visible_languages.remove(pos);
             if self.config.layout.active == norm
                 && let Some(first) = self.config.layout.visible_languages.first()
             {
                 self.config.layout.active = first.clone();
             }
-            true
+            return true;
+        }
+        false
+    }
+
+    /// Toggle whether a language appears in the top Fast Language Switcher bar (keeps at least 1 enabled).
+    pub fn toggle_visible_language(&mut self, code: &str) -> bool {
+        let Some(norm) = self.registry.normalize_code(code) else {
+            return false;
+        };
+        if self.config.layout.visible_languages.contains(&norm) {
+            self.remove_visible_language(&norm)
         } else {
-            self.config.layout.visible_languages.push(norm);
-            true
+            self.add_visible_language(&norm)
         }
     }
 

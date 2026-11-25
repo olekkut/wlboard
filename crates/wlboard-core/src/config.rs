@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::layout::{BUILTIN_LAYOUT_CODES, KeyboardStyle};
+use crate::layout::{DEFAULT_VISIBLE_LAYOUT_CODES, KeyboardStyle};
 use crate::panel::PANEL_STANDARD;
 use crate::theme::AppearanceSettings;
-use crate::touch::{MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH};
+use crate::touch::{MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, OutputBounds};
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -42,10 +42,10 @@ pub struct WindowGeometry {
 impl Default for WindowGeometry {
     fn default() -> Self {
         Self {
-            x: 180,
-            y: 560,
-            width: 900,
-            height: 315,
+            x: 120,
+            y: 420,
+            width: 860,
+            height: 300,
         }
     }
 }
@@ -56,6 +56,19 @@ impl WindowGeometry {
         self.height = self.height.clamp(MIN_WINDOW_HEIGHT, 1600);
         self.x = self.x.clamp(0, 7680);
         self.y = self.y.clamp(0, 4320);
+    }
+
+    /// Ensure the floating keyboard fits completely inside the active monitor's logical bounds.
+    pub fn clamp_to_output(&mut self, bounds: OutputBounds) {
+        self.clamp();
+        let max_w = bounds.width.saturating_sub(16).max(MIN_WINDOW_WIDTH);
+        let max_h = bounds.height.saturating_sub(48).max(MIN_WINDOW_HEIGHT);
+        self.width = self.width.min(max_w);
+        self.height = self.height.min(max_h);
+        let max_x = bounds.width.saturating_sub(self.width) as i32;
+        let max_y = bounds.height.saturating_sub(self.height + 44) as i32;
+        self.x = self.x.clamp(0, max_x.max(0));
+        self.y = self.y.clamp(0, max_y.max(0));
     }
 }
 
@@ -85,7 +98,7 @@ impl Default for LayoutSettings {
             active: "en".to_owned(),
             style: KeyboardStyle::Standard,
             active_panel: PANEL_STANDARD.to_owned(),
-            visible_languages: BUILTIN_LAYOUT_CODES
+            visible_languages: DEFAULT_VISIBLE_LAYOUT_CODES
                 .iter()
                 .map(|c| (*c).to_owned())
                 .collect(),

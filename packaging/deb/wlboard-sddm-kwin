@@ -1,0 +1,7 @@
+#!/bin/sh
+# Wrapper used by SDDM Wayland so kwin_wayland launches wlboard as the
+# login-screen virtual keyboard and shows it reliably on both touch and
+# mouse/VM systems (KWIN_IM_SHOW_ALWAYS=1 + native Wayland text-input).
+export KWIN_IM_SHOW_ALWAYS=1
+unset QT_IM_MODULE GTK_IM_MODULE
+exec kwin_wayland --drm --no-lockscreen --no-global-shortcuts --inputmethod /usr/bin/wlboard-im --locale1 "$@"

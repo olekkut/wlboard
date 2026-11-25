@@ -1,4 +1,4 @@
-//! Dedicated 3-pane visual **Panel Editor** (`1040×620` resizable `xdg_toplevel` window)
+//! Dedicated 3-pane visual **Panel Editor** (`960×590` resizable `xdg_toplevel` window)
 //! with a 0.5-unit snap-grid canvas, drag-to-move, drag-to-resize, and full Key Inspector.
 
 use tiny_skia::Pixmap;
@@ -13,8 +13,8 @@ use wlboard_core::{
 use crate::canvas::{TextAlign, UiRenderer};
 use crate::settings_view::evdev_to_ascii;
 
-pub const PANEL_EDITOR_DEFAULT_WIDTH: u32 = 1040;
-pub const PANEL_EDITOR_DEFAULT_HEIGHT: u32 = 620;
+pub const PANEL_EDITOR_DEFAULT_WIDTH: u32 = 960;
+pub const PANEL_EDITOR_DEFAULT_HEIGHT: u32 = 590;
 
 /// Ordered picker keycode table cycled in the Key Inspector.
 const INSPECTOR_KEYCODES: &[KeyCode] = &[
@@ -112,6 +112,8 @@ pub enum EditorField {
 pub enum PanelEditorAction {
     None,
     Redraw,
+    /// User pressed an empty header or chrome region — initiate native compositor window move.
+    StartWindowMove,
     PanelsChanged,
     CloseEditor,
 }
@@ -214,6 +216,12 @@ impl PanelEditorView {
         }
     }
 
+    /// Returns true if `p` hovers an empty header area suitable for showing a grab cursor.
+    #[must_use]
+    pub fn is_header_drag_area(&self, p: Point) -> bool {
+        p.y <= 52.0 && !self.hits.iter().any(|(r, _)| r.contains(p))
+    }
+
     /// Handle pointer press inside the Panel Editor window.
     pub fn pointer_down(
         &mut self,
@@ -230,6 +238,9 @@ impl PanelEditorView {
 
         let Some(hit) = hit else {
             self.focused_field = None;
+            if !self.canvas_rect.contains(p) {
+                return PanelEditorAction::StartWindowMove;
+            }
             return PanelEditorAction::Redraw;
         };
         self.status_message = None;
@@ -733,6 +744,15 @@ impl PanelEditorView {
         );
         UiRenderer::draw_hline(pixmap, 0.0, w, header_h, 1.0, border, scale);
 
+        // Subtle centered drag-handle pill indicating the header drags the window
+        UiRenderer::fill_rounded_rect(
+            pixmap,
+            Rect::new((w - 40.0) * 0.5, 4.0, 40.0, 4.0),
+            2.0,
+            pal.muted_text.with_alpha(0.45),
+            scale,
+        );
+
         renderer.draw_icon(
             pixmap,
             IconId::Panels,
@@ -744,23 +764,10 @@ impl PanelEditorView {
         renderer.draw_text(
             pixmap,
             "Panel Editor",
-            Rect::new(44.0, 0.0, 140.0, header_h),
-            16.5,
+            Rect::new(44.0, 0.0, 128.0, header_h),
+            16.0,
             700,
             pal.colors.text_icon,
-            TextAlign::Left,
-            scale,
-        );
-        renderer.draw_text(
-            pixmap,
-            &format!(
-                "{}  |  {:.1} x {:.1} grid (0.5u snap)",
-                self.editing_panel.name, self.editing_panel.cols, self.editing_panel.rows
-            ),
-            Rect::new(172.0, 0.0, 310.0, header_h),
-            11.5,
-            400,
-            pal.muted_text,
             TextAlign::Left,
             scale,
         );
@@ -779,16 +786,16 @@ impl PanelEditorView {
         self.hits.push((close_rect, EditorHit::CloseButton));
 
         // Toolbar action buttons (+ Add Key, Delete Key, Reset Built-in)
-        let mut bx = close_rect.x - 14.0;
+        let mut bx = close_rect.x - 12.0;
         if self.editing_panel.built_in && panel_store.has_override(&self.editing_panel.id) {
-            let r = Rect::new(bx - 104.0, 11.0, 104.0, 30.0);
+            let r = Rect::new(bx - 102.0, 11.0, 102.0, 30.0);
             UiRenderer::fill_rounded_rect(pixmap, r, 7.0, pal.colors.modifier_bg, scale);
             UiRenderer::stroke_rounded_rect(pixmap, r, 7.0, 1.0, border, scale);
             renderer.draw_text(
                 pixmap,
                 "Reset Built-in",
                 r,
-                11.5,
+                11.0,
                 600,
                 pal.colors.text_icon,
                 TextAlign::Center,
@@ -797,7 +804,7 @@ impl PanelEditorView {
             self.hits.push((r, EditorHit::ResetBuiltin));
             bx = r.x - 8.0;
         }
-        let del_key_rect = Rect::new(bx - 114.0, 11.0, 114.0, 30.0);
+        let del_key_rect = Rect::new(bx - 110.0, 11.0, 110.0, 30.0);
         UiRenderer::fill_rounded_rect(pixmap, del_key_rect, 7.0, pal.colors.modifier_bg, scale);
         UiRenderer::stroke_rounded_rect(pixmap, del_key_rect, 7.0, 1.0, border, scale);
         renderer.draw_icon(
@@ -825,7 +832,7 @@ impl PanelEditorView {
         );
         self.hits.push((del_key_rect, EditorHit::DeleteKey));
 
-        let add_key_rect = Rect::new(del_key_rect.x - 118.0, 11.0, 110.0, 30.0);
+        let add_key_rect = Rect::new(del_key_rect.x - 114.0, 11.0, 106.0, 30.0);
         UiRenderer::fill_rounded_rect(pixmap, add_key_rect, 7.0, pal.colors.accent, scale);
         renderer.draw_icon(
             pixmap,
@@ -852,17 +859,42 @@ impl PanelEditorView {
         );
         self.hits.push((add_key_rect, EditorHit::AddKey));
 
-        // --- 3-Pane Body Layout ---
-        let body_y = header_h + 12.0;
-        let body_h = (h - body_y - 14.0).max(200.0);
-        let left_w = 192.0;
-        let right_w = 258.0;
-        let center_x = 14.0 + left_w + 12.0;
-        let center_w = (w - center_x - right_w - 26.0).max(260.0);
-        let right_x = center_x + center_w + 12.0;
+        // Adaptive subtitle sized strictly between title and Add Key button so it never overlaps
+        let subtitle_x = 166.0;
+        let subtitle_w = (add_key_rect.x - subtitle_x - 12.0).max(80.0);
+        let subtitle = if subtitle_w >= 270.0 {
+            format!(
+                "{}  |  {:.1} x {:.1} grid (0.5u snap)",
+                self.editing_panel.name, self.editing_panel.cols, self.editing_panel.rows
+            )
+        } else {
+            format!(
+                "{} ({:.1} x {:.1})",
+                self.editing_panel.name, self.editing_panel.cols, self.editing_panel.rows
+            )
+        };
+        renderer.draw_text(
+            pixmap,
+            &subtitle,
+            Rect::new(subtitle_x, 0.0, subtitle_w, header_h),
+            11.5,
+            400,
+            pal.muted_text,
+            TextAlign::Left,
+            scale,
+        );
+
+        // --- 3-Pane Body Layout (responsive for 960x590 and narrower widths) ---
+        let body_y = header_h + 10.0;
+        let body_h = (h - body_y - 12.0).max(200.0);
+        let left_w = (w * 0.19).clamp(164.0, 200.0);
+        let right_w = (w * 0.25).clamp(228.0, 268.0);
+        let center_x = 12.0 + left_w + 10.0;
+        let center_w = (w - center_x - right_w - 22.0).max(240.0);
+        let right_x = center_x + center_w + 10.0;
 
         // === PANE 1 (Left): Panels Collection ===
-        let left_rect = Rect::new(14.0, body_y, left_w, body_h);
+        let left_rect = Rect::new(12.0, body_y, left_w, body_h);
         UiRenderer::fill_rounded_rect(pixmap, left_rect, 10.0, card_bg, scale);
         UiRenderer::stroke_rounded_rect(pixmap, left_rect, 10.0, 1.0, border, scale);
 
@@ -1285,6 +1317,11 @@ impl PanelEditorView {
         let mut iy = right_rect.y + 38.0;
 
         // Label & Sub-label inputs
+        let label_placeholder = if k.role == KeyRole::Space {
+            Some("Auto (active layout)")
+        } else {
+            None
+        };
         self.draw_text_field(
             renderer,
             pixmap,
@@ -1295,6 +1332,7 @@ impl PanelEditorView {
             iw,
             "Label",
             &k.label,
+            label_placeholder,
             self.focused_field == Some(EditorField::KeyLabel),
             EditorHit::KeyLabelInput,
             scale,
@@ -1311,6 +1349,7 @@ impl PanelEditorView {
             iw,
             "Sub / Shift Label",
             &k.shift_label,
+            None,
             self.focused_field == Some(EditorField::KeyShiftLabel),
             EditorHit::KeyShiftInput,
             scale,
@@ -1455,6 +1494,7 @@ impl PanelEditorView {
                     iw,
                     "Text to Type",
                     text,
+                    None,
                     self.focused_field == Some(EditorField::SnippetText),
                     EditorHit::SnippetInput,
                     scale,
@@ -1708,15 +1748,19 @@ impl PanelEditorView {
         );
         self.hits.push((auto_r, EditorHit::ColorOverride(None)));
 
+        let swatch_area = (iw - 46.0).max(112.0);
+        let swatch_step = (swatch_area / 7.0).min(26.0);
+        let swatch_radius = if swatch_step < 23.0 { 7.5 } else { 8.5 };
         for (i, sw) in ACCENT_SWATCHES.iter().take(7).enumerate() {
-            let sx = ix + 52.0 + i as f32 * 26.0;
+            let sx = ix + 48.0 + swatch_radius + i as f32 * swatch_step;
             let sy = iy + 11.0;
-            UiRenderer::fill_circle(pixmap, sx, sy, 8.5, sw.color, scale);
+            UiRenderer::fill_circle(pixmap, sx, sy, swatch_radius, sw.color, scale);
             if k.color_override == Some(sw.color) {
+                let ring = swatch_radius + 2.0;
                 UiRenderer::stroke_rounded_rect(
                     pixmap,
-                    Rect::new(sx - 10.5, sy - 10.5, 21.0, 21.0),
-                    10.5,
+                    Rect::new(sx - ring, sy - ring, ring * 2.0, ring * 2.0),
+                    ring,
                     1.8,
                     pal.colors.text_icon,
                     scale,
@@ -1751,6 +1795,7 @@ impl PanelEditorView {
         w: f32,
         label: &str,
         value: &str,
+        placeholder: Option<&str>,
         focused: bool,
         hit: EditorHit,
         scale: f32,
@@ -1775,18 +1820,28 @@ impl PanelEditorView {
             if focused { pal.colors.accent } else { border },
             scale,
         );
-        let disp = if focused {
-            format!("{value}|")
+        let (disp, fg) = if focused {
+            (format!("{value}|"), pal.colors.text_icon)
+        } else if value.is_empty() {
+            if let Some(ph) = placeholder {
+                (ph.to_owned(), pal.muted_text)
+            } else {
+                (String::new(), pal.colors.text_icon)
+            }
         } else {
-            value.to_owned()
+            (value.to_owned(), pal.colors.text_icon)
         };
         renderer.draw_text(
             pixmap,
             &disp,
             Rect::new(r.x + 7.0, r.y, r.w - 12.0, r.h),
             11.0,
-            500,
-            pal.colors.text_icon,
+            if value.is_empty() && !focused {
+                400
+            } else {
+                500
+            },
+            fg,
             TextAlign::Left,
             scale,
         );
@@ -1806,7 +1861,11 @@ impl PanelEditorView {
         inc_hit: EditorHit,
         scale: f32,
     ) {
-        let lbl_w = (rect.w * 0.34).clamp(18.0, 44.0);
+        let lbl_w = if label.len() <= 1 {
+            16.0
+        } else {
+            (rect.w * 0.34).clamp(24.0, 44.0)
+        };
         renderer.draw_text(
             pixmap,
             label,

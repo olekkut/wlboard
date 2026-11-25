@@ -16,8 +16,14 @@ const UK_JSON: &str = include_str!("../layouts/uk.json");
 const RU_JSON: &str = include_str!("../layouts/ru.json");
 const AR_JSON: &str = include_str!("../layouts/ar.json");
 
-/// Built-in layout order displayed in the fast language switcher.
-pub const BUILTIN_LAYOUT_CODES: &[&str] = &["en", "pl", "uk", "ru", "ar"];
+/// Default subset of languages enabled in the top Fast Language Switcher on first run.
+pub const DEFAULT_VISIBLE_LAYOUT_CODES: &[&str] = &["en", "pl", "uk", "ru", "ar"];
+
+/// Complete built-in international layout catalog (28 languages).
+pub const BUILTIN_LAYOUT_CODES: &[&str] = &[
+    "en", "gb", "pl", "uk", "ru", "ar", "de", "fr", "es", "it", "pt", "nl", "cs", "sk", "hu", "ro",
+    "hr", "tr", "sv", "no", "da", "fi", "el", "bg", "be", "lt", "he", "fa",
+];
 
 #[derive(Debug, Error)]
 pub enum LayoutError {
@@ -349,7 +355,7 @@ impl Default for LayoutRegistry {
 }
 
 impl LayoutRegistry {
-    /// Load all 5 built-in layouts (`en`, `pl`, `uk`, `ru`, `ar`).
+    /// Load all 28 built-in layouts (5 core JSON layouts + 23 extended international layouts).
     #[must_use]
     pub fn new() -> Self {
         let mut reg = Self {
@@ -359,6 +365,9 @@ impl LayoutRegistry {
         for raw in [EN_JSON, PL_JSON, UK_JSON, RU_JSON, AR_JSON] {
             let def: LayoutDefinition =
                 serde_json::from_str(raw).expect("built-in layout JSON must be valid");
+            reg.insert(def);
+        }
+        for def in crate::catalog::extended_builtin_layouts() {
             reg.insert(def);
         }
         reg
@@ -391,7 +400,8 @@ impl LayoutRegistry {
         self.layouts.insert(code, def);
     }
 
-    /// Normalize external XKB/Plasma layout codes (e.g., `"ara"` -> `"ar"`, `"ua"` -> `"uk"`, `"us"`/`"gb"` -> `"en"`).
+    /// Normalize external XKB/Plasma layout codes (e.g., `"ara"` -> `"ar"`, `"ua"` -> `"uk"`,
+    /// `"us"` -> `"en"`, `"cz"` -> `"cs"`, `"se"` -> `"sv"`, `"dk"` -> `"da"`, `"gr"` -> `"el"`).
     #[must_use]
     pub fn normalize_code(&self, external: &str) -> Option<String> {
         let trimmed = external.trim().to_lowercase();
@@ -400,11 +410,34 @@ impl LayoutRegistry {
             .next()
             .unwrap_or("");
         let mapped = match base {
-            "us" | "gb" | "en" | "eng" => "en",
+            "us" | "en" | "eng" => "en",
+            "gb" | "en_gb" => "gb",
             "pl" | "pol" => "pl",
             "ua" | "uk" | "ukr" => "uk",
             "ru" | "rus" => "ru",
             "ar" | "ara" | "arb" => "ar",
+            "de" | "deu" | "ger" => "de",
+            "fr" | "fra" | "fre" => "fr",
+            "es" | "spa" => "es",
+            "it" | "ita" => "it",
+            "pt" | "por" => "pt",
+            "nl" | "nld" | "dut" => "nl",
+            "cz" | "cs" | "ces" => "cs",
+            "sk" | "slk" => "sk",
+            "hu" | "hun" => "hu",
+            "ro" | "ron" => "ro",
+            "hr" | "hrv" => "hr",
+            "tr" | "tur" => "tr",
+            "se" | "sv" | "swe" => "sv",
+            "no" | "nor" | "nb" => "no",
+            "dk" | "da" | "dan" => "da",
+            "fi" | "fin" => "fi",
+            "gr" | "el" | "ell" => "el",
+            "bg" | "bul" => "bg",
+            "by" | "be" | "bel" => "be",
+            "lt" | "lit" => "lt",
+            "il" | "he" | "heb" => "he",
+            "ir" | "fa" | "fas" => "fa",
             other => other,
         };
         if self.layouts.contains_key(mapped) {
@@ -813,15 +846,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn loads_all_five_builtin_layouts() {
+    fn loads_all_builtin_layouts() {
         let reg = LayoutRegistry::new();
-        assert_eq!(reg.available().len(), 5);
+        assert_eq!(reg.available().len(), BUILTIN_LAYOUT_CODES.len());
+        assert_eq!(reg.available().len(), 28);
         assert_eq!(reg.get("en").short_label, "EN");
+        assert_eq!(reg.get("gb").short_label, "UK");
         assert_eq!(reg.get("pl").short_label, "PL");
         assert_eq!(reg.get("uk").short_label, "UA");
         assert_eq!(reg.get("ru").short_label, "RU");
         assert_eq!(reg.get("ar").short_label, "AR");
+        assert_eq!(reg.get("de").short_label, "DE");
+        assert_eq!(reg.get("fr").short_label, "FR");
+        assert_eq!(reg.get("el").short_label, "EL");
         assert!(reg.get("ar").is_rtl);
+        assert!(reg.get("he").is_rtl);
+        assert!(reg.get("fa").is_rtl);
     }
 
     #[test]
@@ -830,9 +870,13 @@ mod tests {
         assert_eq!(reg.normalize_code("ara"), Some("ar".to_owned()));
         assert_eq!(reg.normalize_code("ua"), Some("uk".to_owned()));
         assert_eq!(reg.normalize_code("us"), Some("en".to_owned()));
-        assert_eq!(reg.normalize_code("gb"), Some("en".to_owned()));
+        assert_eq!(reg.normalize_code("gb"), Some("gb".to_owned()));
         assert_eq!(reg.normalize_code("pl(qwertz)"), Some("pl".to_owned()));
         assert_eq!(reg.normalize_code("ru"), Some("ru".to_owned()));
+        assert_eq!(reg.normalize_code("cz"), Some("cs".to_owned()));
+        assert_eq!(reg.normalize_code("gr"), Some("el".to_owned()));
+        assert_eq!(reg.normalize_code("il"), Some("he".to_owned()));
+        assert_eq!(reg.normalize_code("se"), Some("sv".to_owned()));
         assert_eq!(reg.normalize_code("nonexistent"), None);
     }
 

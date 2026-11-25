@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VERSION="0.2.0-1"
+VERSION="0.3.0-1"
 ARCH="amd64"
 PKG_NAME="wlboard_${VERSION}_${ARCH}.deb"
 STAGE_DIR="$(mktemp -d)"
@@ -29,6 +29,8 @@ install -Dm755 "${ROOT_DIR}/packaging/deb/setup-uinput.sh" \
     "${STAGE_DIR}/usr/share/wlboard/udev/setup-uinput.sh"
 install -Dm755 "${ROOT_DIR}/packaging/deb/setup-sddm.sh" \
     "${STAGE_DIR}/usr/share/wlboard/scripts/setup-sddm.sh"
+install -Dm755 "${ROOT_DIR}/packaging/deb/wlboard-sddm-kwin" \
+    "${STAGE_DIR}/usr/share/wlboard/scripts/wlboard-sddm-kwin"
 install -Dm644 "${ROOT_DIR}/LICENSE" \
     "${STAGE_DIR}/usr/share/doc/wlboard/copyright"
 

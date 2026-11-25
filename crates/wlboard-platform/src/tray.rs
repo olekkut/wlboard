@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use tracing::{debug, info};
-use wlboard_core::{BUILTIN_LAYOUT_CODES, KeyboardStyle, PANEL_STANDARD};
+use wlboard_core::{KeyboardStyle, PANEL_STANDARD};
 use zbus::wire::{ObjectPath, OwnedVariant, Variant};
 use zbus::{Connection, interface, proxy};
 
@@ -32,6 +32,7 @@ pub struct TrayState {
     pub active_layout: String,
     pub active_panel: String,
     pub panels: Vec<(String, String)>,
+    pub languages: Vec<(String, String)>,
     pub revision: u32,
 }
 
@@ -43,6 +44,7 @@ impl Default for TrayState {
             active_layout: "en".to_owned(),
             active_panel: PANEL_STANDARD.to_owned(),
             panels: vec![("standard".to_owned(), "Standard".to_owned())],
+            languages: vec![("en".to_owned(), "English (EN)".to_owned())],
             revision: 1,
         }
     }
@@ -229,14 +231,8 @@ impl DbusMenu {
         p_panels.insert("enabled".to_owned(), Self::prop_bool(true));
         p_panels.insert("visible".to_owned(), Self::prop_bool(true));
 
-        let layout_labels = [
-            ("en", "English (EN)"),
-            ("pl", "Polish (PL)"),
-            ("uk", "Ukrainian (UA)"),
-            ("ru", "Russian (RU)"),
-            ("ar", "Arabic (AR)"),
-        ];
-        let layout_children: Vec<OwnedVariant> = layout_labels
+        let layout_children: Vec<OwnedVariant> = snapshot
+            .languages
             .iter()
             .enumerate()
             .map(|(idx, (code, label))| {
@@ -334,8 +330,13 @@ impl DbusMenu {
             MENU_QUIT => (self.on_event)(PlatformEvent::Quit),
             n if (MENU_LAYOUT_BASE..MENU_PANEL_BASE).contains(&n) => {
                 let idx = (n - MENU_LAYOUT_BASE) as usize;
-                if let Some(code) = BUILTIN_LAYOUT_CODES.get(idx) {
-                    (self.on_event)(PlatformEvent::SetLayout((*code).to_owned()));
+                let lang_code = self
+                    .state
+                    .lock()
+                    .ok()
+                    .and_then(|s| s.languages.get(idx).map(|(c, _)| c.clone()));
+                if let Some(code) = lang_code {
+                    (self.on_event)(PlatformEvent::SetLayout(code));
                 }
             }
             n if n >= MENU_PANEL_BASE => {

@@ -1,5 +1,6 @@
 //! Pure, dependency-free core logic for `wlboard`.
 
+pub mod catalog;
 pub mod config;
 pub mod keycode;
 pub mod layout;
@@ -13,8 +14,8 @@ pub mod touch;
 pub use config::{AppConfig, BehaviorSettings, KeycapStyle, LayoutSettings, WindowGeometry};
 pub use keycode::{IconId, KeyCode, KeyRole, ModifierKind};
 pub use layout::{
-    BUILTIN_LAYOUT_CODES, CompactPage, KeyAction, KeySpec, KeyboardStyle, LayoutDefinition,
-    LayoutRegistry, media_control_row,
+    BUILTIN_LAYOUT_CODES, CompactPage, DEFAULT_VISIBLE_LAYOUT_CODES, KeyAction, KeySpec,
+    KeyboardStyle, LayoutDefinition, LayoutRegistry, media_control_row,
 };
 pub use modifiers::{ModifierLevel, ModifierTracker};
 pub use panel::{

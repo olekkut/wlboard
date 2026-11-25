@@ -83,7 +83,7 @@ fn composite_on_backdrop(fg: &Pixmap, backdrop: Color, pad: u32) -> Pixmap {
     out
 }
 
-/// Generate the full v0.2.0 showcase suite of PNG screenshots for visual QA and documentation.
+/// Generate the full v0.3.0 showcase suite of PNG screenshots for visual QA and documentation.
 pub fn generate_preview_suite(out_dir: &Path) -> Result<Vec<String>, String> {
     fs::create_dir_all(out_dir).map_err(|e| format!("create_dir_all failed: {e}"))?;
     let mut renderer = UiRenderer::new();
@@ -267,6 +267,25 @@ pub fn generate_preview_suite(out_dir: &Path) -> Result<Vec<String>, String> {
             .save_png(&path_layout)
             .map_err(|e| format!("save_png failed: {e}"))?;
         written.push(path_layout.display().to_string());
+
+        settings.lang_picker_open = true;
+        settings.lang_search_input.clear();
+        settings.lang_picker_page = 0;
+        let pm_picker = render_settings_pixmap(&mut renderer, &mut settings, &state, 2.0);
+        let path_picker = out_dir.join("settings_language_picker.png");
+        pm_picker
+            .save_png(&path_picker)
+            .map_err(|e| format!("save_png failed: {e}"))?;
+        written.push(path_picker.display().to_string());
+
+        settings.lang_picker_open = false;
+        settings.tab = SettingsTab::Behavior;
+        let pm_sys = render_settings_pixmap(&mut renderer, &mut settings, &state, 2.0);
+        let path_sys = out_dir.join("settings_system_lockscreen.png");
+        pm_sys
+            .save_png(&path_sys)
+            .map_err(|e| format!("save_png failed: {e}"))?;
+        written.push(path_sys.display().to_string());
     }
 
     let _ = fs::remove_dir_all(&temp_presets);

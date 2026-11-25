@@ -1,9 +1,9 @@
 //! Native Wayland client runtime using `smithay-client-toolkit` + `calloop`:
 //! - Dual Mode:
 //!   1. Floating draggable & 8-edge resizable `zwlr_layer_shell_v1` overlay (`Layer::Overlay`, `KeyboardInteractivity::None`)
-//!   2. Wayland Input Method mode (`--input-method`: `zwp_input_method_v1` + `zwp_input_panel_v1`) for KDE Plasma Lockscreen & Virtual Keyboard
-//! - Built-in themed `xdg_toplevel` **Customize wlboard** Settings window
-//! - Built-in themed 3-pane `xdg_toplevel` **Panel Editor** window (`1040×620` resizable)
+//!   2. Wayland Input Method mode (`--input-method`: `zwp_input_method_v1` + `zwp_input_panel_v1`) for KDE Plasma Lockscreen & SDDM Login Screen
+//! - Built-in themed `xdg_toplevel` **Customize wlboard** Settings window (draggable + 8-edge resizable)
+//! - Built-in themed 3-pane `xdg_toplevel` **Panel Editor** window (`960×590` draggable + 8-edge resizable)
 //! - True `wl_touch` multi-touch + `wl_pointer` + raw `wl_keyboard`
 
 use std::sync::Arc;
@@ -17,6 +17,7 @@ use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Fra
 use smithay_client_toolkit::dispatch2::Dispatch2;
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
+use smithay_client_toolkit::reexports::protocols::xdg::shell::client::xdg_toplevel::ResizeEdge as XdgResizeEdge;
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
 use smithay_client_toolkit::seat::pointer::{
     CursorIcon, PointerEvent, PointerEventKind, PointerHandler, ThemeSpec, ThemedPointer,
@@ -58,7 +59,10 @@ use wlboard_core::{
     MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, OutputBounds, PanelStore, Point, PresetStore, ResizeEdge,
     WindowGeometry, apply_resize, clamp_move,
 };
-use wlboard_platform::{InputManager, PlatformEvent, PlatformHandle, TrayState};
+use wlboard_platform::{
+    InputManager, PlatformEvent, PlatformHandle, TrayState, disable_kde_lockscreen_mouse_override,
+    enable_kde_lockscreen_support,
+};
 
 use crate::canvas::{UiRenderer, copy_pixmap_to_wayland_argb8888};
 use crate::keyboard_view::{KeyboardHit, KeyboardViewLayout};
@@ -71,6 +75,7 @@ use crate::settings_view::{
 
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
+const TOPLEVEL_RESIZE_BORDER: f32 = 7.0;
 
 const REPEAT_INITIAL_DELAY: Duration = Duration::from_millis(420);
 const REPEAT_INTERVAL: Duration = Duration::from_millis(55);
@@ -156,6 +161,7 @@ struct WlboardRuntime {
     input_method_global: Option<ZwpInputMethodV1>,
     input_panel_global: Option<ZwpInputPanelV1>,
     input_method_mode: bool,
+    pending_im_show: bool,
 
     input: InputManager,
     input_initialized: bool,
@@ -191,7 +197,7 @@ pub fn run_wayland_app(
         format!("Could not connect to Wayland display (is WAYLAND_DISPLAY set?): {e}")
     })?;
 
-    let (globals, event_queue) = registry_queue_init::<WlboardRuntime>(&conn)
+    let (globals, mut event_queue) = registry_queue_init::<WlboardRuntime>(&conn)
         .map_err(|e| format!("Failed to initialize Wayland registry: {e}"))?;
     let qh = event_queue.handle();
 
@@ -252,7 +258,7 @@ pub fn run_wayland_app(
         kb_state.set_panel(pid);
     }
     if active_im_mode {
-        // In Wayland Input Method mode (Lockscreen / Plasma Virtual Keyboard), KWin activates visibility.
+        // In Wayland Input Method mode (Lockscreen / SDDM / Plasma Virtual Keyboard), KWin activates visibility.
         kb_state.visible = false;
     }
     if options.open_settings {
@@ -274,6 +280,11 @@ pub fn run_wayland_app(
             .panels
             .iter()
             .map(|p| (p.id.clone(), p.name.clone()))
+            .collect(),
+        languages: kb_state
+            .visible_layouts()
+            .into_iter()
+            .map(|l| (l.code.clone(), l.display_name.clone()))
             .collect(),
         revision: 1,
     };
@@ -314,6 +325,7 @@ pub fn run_wayland_app(
         input_method_global,
         input_panel_global,
         input_method_mode: active_im_mode,
+        pending_im_show: false,
         input,
         input_initialized: active_im_mode,
         renderer: UiRenderer::new(),
@@ -336,7 +348,16 @@ pub fn run_wayland_app(
         shutdown_flag,
     };
 
+    // Perform an initial Wayland roundtrip so `wl_output` dimensions and `wl_seat`
+    // are populated BEFORE initial surfaces or `zwp_input_panel_surface_v1::set_toplevel`.
+    let _ = event_queue.roundtrip(&mut runtime);
+
     if !active_im_mode {
+        runtime
+            .state
+            .config
+            .window
+            .clamp_to_output(runtime.output_bounds);
         if runtime.state.visible {
             runtime.create_keyboard_surface(&qh);
         }
@@ -348,9 +369,11 @@ pub fn run_wayland_app(
         }
     } else {
         info!(
-            "wlboard listening in Wayland Input Method mode (awaiting KWin lockscreen/text activation)"
+            "wlboard listening in Wayland Input Method mode (output {}x{}, awaiting KWin activation)",
+            runtime.output_bounds.width, runtime.output_bounds.height
         );
     }
+    let _ = conn.flush();
 
     let mut event_loop: EventLoop<WlboardRuntime> =
         EventLoop::try_new().map_err(|e| format!("Failed creating calloop event loop: {e}"))?;
@@ -397,26 +420,74 @@ pub fn run_wayland_app(
 }
 
 impl WlboardRuntime {
+    fn clamp_floating_keyboard_to_output(&mut self, qh: &QueueHandle<Self>) {
+        if self.input_method_mode {
+            return;
+        }
+        let prev = self.state.config.window;
+        self.state.config.window.clamp_to_output(self.output_bounds);
+        let next = self.state.config.window;
+        if next != prev {
+            if let Some(ref mut kb) = self.kb_surface
+                && let KeyboardSurfaceKind::Layer(ref layer) = kb.kind
+            {
+                layer.set_size(next.width, next.height);
+                layer.set_margin(next.y, 0, 0, next.x);
+                kb.dirty = true;
+                layer.commit();
+            }
+            self.mark_config_dirty();
+            self.redraw_keyboard_if_needed(qh);
+        }
+    }
+
     fn create_keyboard_surface(&mut self, qh: &QueueHandle<Self>) {
         if self.kb_surface.is_some() {
             return;
         }
-        let geom = self.state.config.window;
 
         if self.input_method_mode
             && let Some(ref panel_mgr) = self.input_panel_global
         {
+            let output = self
+                .primary_output
+                .clone()
+                .or_else(|| self.output_state.outputs().next());
+            let Some(out) = output else {
+                info!("Deferring input-panel creation until wl_output is announced");
+                self.pending_im_show = true;
+                return;
+            };
+            self.pending_im_show = false;
+
+            let max_w = self
+                .output_bounds
+                .width
+                .saturating_sub(24)
+                .max(MIN_WINDOW_WIDTH);
+            let max_h = ((self.output_bounds.height * 45) / 100)
+                .max(240)
+                .max(MIN_WINDOW_HEIGHT);
+            let im_w = self
+                .state
+                .config
+                .window
+                .width
+                .clamp(MIN_WINDOW_WIDTH, max_w);
+            let im_h = self
+                .state
+                .config
+                .window
+                .height
+                .clamp(MIN_WINDOW_HEIGHT, max_h);
+            self.state.config.window.width = im_w;
+            self.state.config.window.height = im_h;
+
             let surface = self.compositor_state.create_surface(qh);
             let panel_surface = panel_mgr.get_input_panel_surface(&surface, qh, InputMethodData);
-            if let Some(ref out) = self.primary_output {
-                panel_surface.set_toplevel(out, ImPanelPosition::CenterBottom as u32);
-            } else {
-                panel_surface.set_overlay_panel();
-            }
-            surface.commit();
+            panel_surface.set_toplevel(&out, ImPanelPosition::CenterBottom as u32);
 
-            let layout =
-                KeyboardViewLayout::compute(&self.state, geom.width as f32, geom.height as f32);
+            let layout = KeyboardViewLayout::compute(&self.state, im_w as f32, im_h as f32);
             self.kb_surface = Some(KeyboardSurfaceState {
                 kind: KeyboardSurfaceKind::InputPanel {
                     surface,
@@ -428,9 +499,14 @@ impl WlboardRuntime {
                 layout,
             });
             self.state.visible = true;
+            // Attach SHM buffer and commit ONCE atomically (avoiding a premature null-buffer commit).
             self.redraw_keyboard_if_needed(qh);
+            info!("Committed input-panel toplevel surface ({im_w}x{im_h}) at CenterBottom");
             return;
         }
+
+        self.state.config.window.clamp_to_output(self.output_bounds);
+        let geom = self.state.config.window;
 
         let Some(ref layer_shell) = self.layer_shell else {
             return;
@@ -459,6 +535,7 @@ impl WlboardRuntime {
     }
 
     fn destroy_keyboard_surface(&mut self) {
+        self.pending_im_show = false;
         self.release_all_keys();
         self.kb_drag = None;
         self.hovered_toolbar = None;
@@ -489,16 +566,22 @@ impl WlboardRuntime {
         self.state.reload_panels(&self.panel_store);
         self.settings_view
             .sync_from_appearance(&self.state.config.appearance);
+        self.settings_view.refresh_system_status();
+
+        let max_w = self.output_bounds.width.saturating_sub(32).max(640);
+        let max_h = self.output_bounds.height.saturating_sub(64).max(540);
+        let init_w = SETTINGS_DEFAULT_WIDTH.min(max_w);
+        let init_h = SETTINGS_DEFAULT_HEIGHT.min(max_h);
 
         let surface = self.compositor_state.create_surface(qh);
         let window = xdg_shell.create_window(surface, WindowDecorations::None, qh);
         window.set_title("Customize wlboard");
         window.set_app_id("io.github.olekkut.wlboard");
-        window.set_min_size(Some((680, 650)));
+        window.set_min_size(Some((640, 540)));
         window.commit();
 
-        self.settings_view.width = SETTINGS_DEFAULT_WIDTH as f32;
-        self.settings_view.height = SETTINGS_DEFAULT_HEIGHT as f32;
+        self.settings_view.width = init_w as f32;
+        self.settings_view.height = init_h as f32;
         self.settings_surface = Some(ToplevelSurfaceState {
             window,
             configured: false,
@@ -526,15 +609,20 @@ impl WlboardRuntime {
         self.state.reload_panels(&self.panel_store);
         self.editor_view.load_panel(self.state.active_panel_def());
 
+        let max_w = self.output_bounds.width.saturating_sub(32).max(780);
+        let max_h = self.output_bounds.height.saturating_sub(64).max(500);
+        let init_w = PANEL_EDITOR_DEFAULT_WIDTH.min(max_w);
+        let init_h = PANEL_EDITOR_DEFAULT_HEIGHT.min(max_h);
+
         let surface = self.compositor_state.create_surface(qh);
         let window = xdg_shell.create_window(surface, WindowDecorations::None, qh);
         window.set_title("wlboard Panel Editor");
         window.set_app_id("io.github.olekkut.wlboard");
-        window.set_min_size(Some((900, 560)));
+        window.set_min_size(Some((780, 500)));
         window.commit();
 
-        self.editor_view.width = PANEL_EDITOR_DEFAULT_WIDTH as f32;
-        self.editor_view.height = PANEL_EDITOR_DEFAULT_HEIGHT as f32;
+        self.editor_view.width = init_w as f32;
+        self.editor_view.height = init_h as f32;
         self.editor_surface = Some(ToplevelSurfaceState {
             window,
             configured: false,
@@ -562,6 +650,11 @@ impl WlboardRuntime {
                 .panels
                 .iter()
                 .map(|p| (p.id.clone(), p.name.clone()))
+                .collect(),
+            self.state
+                .visible_layouts()
+                .into_iter()
+                .map(|l| (l.code.clone(), l.display_name.clone()))
                 .collect(),
         );
     }
@@ -1154,7 +1247,7 @@ impl WlboardRuntime {
     fn handle_settings_action(&mut self, action: SettingsAction, qh: &QueueHandle<Self>) {
         match action {
             SettingsAction::None => {}
-            SettingsAction::Redraw => {
+            SettingsAction::Redraw | SettingsAction::StartWindowMove => {
                 self.mark_settings_dirty();
                 self.redraw_dirty(qh);
             }
@@ -1174,6 +1267,36 @@ impl WlboardRuntime {
                 self.create_editor_surface(qh);
                 self.redraw_dirty(qh);
             }
+            SettingsAction::EnableKdeLockscreen => {
+                match enable_kde_lockscreen_support() {
+                    Ok(msg) => {
+                        info!("KDE lockscreen setup updated: {msg}");
+                        self.settings_view.status_message = Some(msg);
+                    }
+                    Err(err) => {
+                        warn!("KDE lockscreen setup failed: {err}");
+                        self.settings_view.status_message = Some(format!("Setup failed: {err}"));
+                    }
+                }
+                self.settings_view.refresh_system_status();
+                self.mark_settings_dirty();
+                self.redraw_dirty(qh);
+            }
+            SettingsAction::DisableKdeMouseOverride => {
+                match disable_kde_lockscreen_mouse_override() {
+                    Ok(msg) => {
+                        info!("KDE lockscreen mode updated: {msg}");
+                        self.settings_view.status_message = Some(msg);
+                    }
+                    Err(err) => {
+                        warn!("Failed disabling KDE mouse override: {err}");
+                        self.settings_view.status_message = Some(format!("Update failed: {err}"));
+                    }
+                }
+                self.settings_view.refresh_system_status();
+                self.mark_settings_dirty();
+                self.redraw_dirty(qh);
+            }
             SettingsAction::CloseSettings => {
                 self.destroy_settings_surface();
                 self.redraw_dirty(qh);
@@ -1187,7 +1310,7 @@ impl WlboardRuntime {
     fn handle_editor_action(&mut self, action: PanelEditorAction, qh: &QueueHandle<Self>) {
         match action {
             PanelEditorAction::None => {}
-            PanelEditorAction::Redraw => {
+            PanelEditorAction::Redraw | PanelEditorAction::StartWindowMove => {
                 self.mark_editor_dirty();
                 self.redraw_dirty(qh);
             }
@@ -1204,6 +1327,25 @@ impl WlboardRuntime {
                 self.redraw_dirty(qh);
             }
         }
+    }
+}
+
+fn detect_window_resize_edge(p: Point, w: f32, h: f32) -> Option<(XdgResizeEdge, CursorIcon)> {
+    let b = TOPLEVEL_RESIZE_BORDER;
+    let left = p.x <= b;
+    let right = p.x >= w - b;
+    let top = p.y <= b;
+    let bottom = p.y >= h - b;
+    match (top, bottom, left, right) {
+        (true, _, true, _) => Some((XdgResizeEdge::TopLeft, CursorIcon::NwseResize)),
+        (true, _, _, true) => Some((XdgResizeEdge::TopRight, CursorIcon::NeswResize)),
+        (_, true, true, _) => Some((XdgResizeEdge::BottomLeft, CursorIcon::NeswResize)),
+        (_, true, _, true) => Some((XdgResizeEdge::BottomRight, CursorIcon::NwseResize)),
+        (true, _, _, _) => Some((XdgResizeEdge::Top, CursorIcon::NsResize)),
+        (_, true, _, _) => Some((XdgResizeEdge::Bottom, CursorIcon::NsResize)),
+        (_, _, true, _) => Some((XdgResizeEdge::Left, CursorIcon::EwResize)),
+        (_, _, _, true) => Some((XdgResizeEdge::Right, CursorIcon::EwResize)),
+        _ => None,
     }
 }
 
@@ -1271,7 +1413,7 @@ impl CompositorHandler for WlboardRuntime {
     fn surface_enter(
         &mut self,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
         _surface: &wl_surface::WlSurface,
         output: &wl_output::WlOutput,
     ) {
@@ -1284,6 +1426,7 @@ impl CompositorHandler for WlboardRuntime {
                 width: w as u32,
                 height: h as u32,
             };
+            self.clamp_floating_keyboard_to_output(qh);
         }
     }
 
@@ -1304,8 +1447,8 @@ impl OutputHandler for WlboardRuntime {
 
     fn new_output(
         &mut self,
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
         output: wl_output::WlOutput,
     ) {
         if self.primary_output.is_none() {
@@ -1321,14 +1464,22 @@ impl OutputHandler for WlboardRuntime {
                 height: h as u32,
             };
         }
+        self.clamp_floating_keyboard_to_output(qh);
+        if self.input_method_mode && self.pending_im_show && self.kb_surface.is_none() {
+            self.create_keyboard_surface(qh);
+            let _ = conn.flush();
+        }
     }
 
     fn update_output(
         &mut self,
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
         output: wl_output::WlOutput,
     ) {
+        if self.primary_output.is_none() {
+            self.primary_output = Some(output.clone());
+        }
         if let Some(info) = self.output_state.info(&output)
             && let Some((w, h)) = info.logical_size
             && w > 0
@@ -1339,6 +1490,11 @@ impl OutputHandler for WlboardRuntime {
                 height: h as u32,
             };
         }
+        self.clamp_floating_keyboard_to_output(qh);
+        if self.input_method_mode && self.pending_im_show && self.kb_surface.is_none() {
+            self.create_keyboard_surface(qh);
+            let _ = conn.flush();
+        }
     }
 
     fn output_destroyed(
@@ -1348,7 +1504,7 @@ impl OutputHandler for WlboardRuntime {
         output: wl_output::WlOutput,
     ) {
         if self.primary_output.as_ref() == Some(&output) {
-            self.primary_output = None;
+            self.primary_output = self.output_state.outputs().find(|o| o != &output);
         }
     }
 }
@@ -1412,10 +1568,10 @@ impl WindowHandler for WlboardRuntime {
             .is_some_and(|s| s.window.wl_surface() == window.wl_surface())
         {
             if let Some(w) = configure.new_size.0 {
-                self.settings_view.width = (w.get() as f32).max(680.0);
+                self.settings_view.width = (w.get() as f32).max(640.0);
             }
             if let Some(h) = configure.new_size.1 {
-                self.settings_view.height = (h.get() as f32).max(650.0);
+                self.settings_view.height = (h.get() as f32).max(540.0);
             }
             if let Some(ref mut s) = self.settings_surface {
                 s.configured = true;
@@ -1428,10 +1584,10 @@ impl WindowHandler for WlboardRuntime {
             .is_some_and(|e| e.window.wl_surface() == window.wl_surface())
         {
             if let Some(w) = configure.new_size.0 {
-                self.editor_view.width = (w.get() as f32).max(900.0);
+                self.editor_view.width = (w.get() as f32).max(780.0);
             }
             if let Some(h) = configure.new_size.1 {
-                self.editor_view.height = (h.get() as f32).max(560.0);
+                self.editor_view.height = (h.get() as f32).max(500.0);
             }
             if let Some(ref mut e) = self.editor_surface {
                 e.configured = true;
@@ -1538,8 +1694,7 @@ impl PointerHandler for WlboardRuntime {
                         if self.kb_drag.is_none() {
                             self.state.hovered_key_id = None;
                             self.hovered_toolbar = None;
-                            self.mark_keyboard_dirty();
-                            self.redraw_keyboard_if_needed(qh);
+                            self.handle_kb_release(ContactId::Pointer, qh);
                         }
                     }
                     PointerEventKind::Press { button, .. }
@@ -1556,26 +1711,48 @@ impl PointerHandler for WlboardRuntime {
                 }
             } else if self.is_settings_surface(&ev.surface) {
                 match ev.kind {
-                    PointerEventKind::Enter { .. } => {
+                    PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                         if let Some(ref ptr) = self.pointer {
-                            let _ = ptr.set_cursor(conn, CursorIcon::Default);
+                            let cursor = if let Some((_, c)) = detect_window_resize_edge(
+                                p,
+                                self.settings_view.width,
+                                self.settings_view.height,
+                            ) {
+                                c
+                            } else if self.settings_view.is_header_drag_area(p) {
+                                CursorIcon::Grab
+                            } else {
+                                CursorIcon::Default
+                            };
+                            let _ = ptr.set_cursor(conn, cursor);
+                        }
+                        if matches!(ev.kind, PointerEventKind::Motion { .. }) {
+                            let action = self.settings_view.pointer_motion(p, &mut self.state);
+                            self.handle_settings_action(action, qh);
                         }
                     }
                     PointerEventKind::Press { button, serial, .. } if button == BTN_LEFT => {
+                        if let Some((edge, _)) = detect_window_resize_edge(
+                            p,
+                            self.settings_view.width,
+                            self.settings_view.height,
+                        ) && let (Some(seat), Some(s)) =
+                            (&self.primary_seat, &self.settings_surface)
+                        {
+                            s.window.resize(seat, serial, edge);
+                            let _ = conn.flush();
+                            continue;
+                        }
                         let action =
                             self.settings_view
                                 .pointer_down(p, &mut self.state, &self.preset_store);
-                        if action == SettingsAction::Redraw
-                            && p.y <= 54.0
+                        if action == SettingsAction::StartWindowMove
                             && let (Some(seat), Some(s)) =
                                 (&self.primary_seat, &self.settings_surface)
                         {
-                            s.window.xdg_toplevel()._move(seat, serial);
+                            s.window.move_(seat, serial);
+                            let _ = conn.flush();
                         }
-                        self.handle_settings_action(action, qh);
-                    }
-                    PointerEventKind::Motion { .. } => {
-                        let action = self.settings_view.pointer_motion(p, &mut self.state);
                         self.handle_settings_action(action, qh);
                     }
                     PointerEventKind::Release { button, .. } if button == BTN_LEFT => {
@@ -1585,26 +1762,48 @@ impl PointerHandler for WlboardRuntime {
                 }
             } else if self.is_editor_surface(&ev.surface) {
                 match ev.kind {
-                    PointerEventKind::Enter { .. } => {
+                    PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                         if let Some(ref ptr) = self.pointer {
-                            let _ = ptr.set_cursor(conn, CursorIcon::Default);
+                            let cursor = if let Some((_, c)) = detect_window_resize_edge(
+                                p,
+                                self.editor_view.width,
+                                self.editor_view.height,
+                            ) {
+                                c
+                            } else if self.editor_view.is_header_drag_area(p) {
+                                CursorIcon::Grab
+                            } else {
+                                CursorIcon::Default
+                            };
+                            let _ = ptr.set_cursor(conn, cursor);
+                        }
+                        if matches!(ev.kind, PointerEventKind::Motion { .. }) {
+                            let action = self.editor_view.pointer_motion(p);
+                            self.handle_editor_action(action, qh);
                         }
                     }
                     PointerEventKind::Press { button, serial, .. } if button == BTN_LEFT => {
+                        if let Some((edge, _)) = detect_window_resize_edge(
+                            p,
+                            self.editor_view.width,
+                            self.editor_view.height,
+                        ) && let (Some(seat), Some(e)) =
+                            (&self.primary_seat, &self.editor_surface)
+                        {
+                            e.window.resize(seat, serial, edge);
+                            let _ = conn.flush();
+                            continue;
+                        }
                         let action =
                             self.editor_view
                                 .pointer_down(p, &mut self.state, &self.panel_store);
-                        if action == PanelEditorAction::Redraw
-                            && p.y <= 52.0
+                        if action == PanelEditorAction::StartWindowMove
                             && let (Some(seat), Some(e)) =
                                 (&self.primary_seat, &self.editor_surface)
                         {
-                            e.window.xdg_toplevel()._move(seat, serial);
+                            e.window.move_(seat, serial);
+                            let _ = conn.flush();
                         }
-                        self.handle_editor_action(action, qh);
-                    }
-                    PointerEventKind::Motion { .. } => {
-                        let action = self.editor_view.pointer_motion(p);
                         self.handle_editor_action(action, qh);
                     }
                     PointerEventKind::Release { button, .. } if button == BTN_LEFT => {
@@ -1623,10 +1822,10 @@ impl PointerHandler for WlboardRuntime {
 impl TouchHandler for WlboardRuntime {
     fn down(
         &mut self,
-        _conn: &Connection,
+        conn: &Connection,
         qh: &QueueHandle<Self>,
         _touch: &wl_touch::WlTouch,
-        _serial: u32,
+        serial: u32,
         _time: u32,
         surface: wl_surface::WlSurface,
         id: i32,
@@ -1639,11 +1838,23 @@ impl TouchHandler for WlboardRuntime {
             let action = self
                 .settings_view
                 .pointer_down(p, &mut self.state, &self.preset_store);
+            if action == SettingsAction::StartWindowMove
+                && let (Some(seat), Some(s)) = (&self.primary_seat, &self.settings_surface)
+            {
+                s.window.move_(seat, serial);
+                let _ = conn.flush();
+            }
             self.handle_settings_action(action, qh);
         } else if self.is_editor_surface(&surface) {
             let action = self
                 .editor_view
                 .pointer_down(p, &mut self.state, &self.panel_store);
+            if action == PanelEditorAction::StartWindowMove
+                && let (Some(seat), Some(e)) = (&self.primary_seat, &self.editor_surface)
+            {
+                e.window.move_(seat, serial);
+                let _ = conn.flush();
+            }
             self.handle_editor_action(action, qh);
         }
     }
@@ -1810,7 +2021,7 @@ impl Dispatch2<ZwpVirtualKeyboardV1, WlboardRuntime> for VirtualKeyboardData {
     }
 }
 
-// --- Wayland Input Method v1 Dispatchers (KDE Plasma Virtual Keyboard & Lockscreen) ---
+// --- Wayland Input Method v1 Dispatchers (KDE Plasma Lockscreen & SDDM Login Screen) ---
 
 impl Dispatch2<ZwpInputMethodV1, WlboardRuntime> for InputMethodData {
     fn event(
@@ -1818,20 +2029,24 @@ impl Dispatch2<ZwpInputMethodV1, WlboardRuntime> for InputMethodData {
         state: &mut WlboardRuntime,
         _proxy: &ZwpInputMethodV1,
         event: zwp_input_method_v1::Event,
-        _conn: &Connection,
+        conn: &Connection,
         qh: &QueueHandle<WlboardRuntime>,
     ) {
         match event {
             zwp_input_method_v1::Event::Activate { id } => {
+                info!("zwp_input_method_v1::Activate received — showing virtual keyboard");
                 state.input.activate_input_method(id);
                 state.create_keyboard_surface(qh);
                 state.mark_keyboard_dirty();
                 state.redraw_keyboard_if_needed(qh);
+                let _ = conn.flush();
             }
             zwp_input_method_v1::Event::Deactivate { context } => {
+                info!("zwp_input_method_v1::Deactivate received — hiding virtual keyboard");
                 context.destroy();
                 state.input.deactivate_input_method();
                 state.destroy_keyboard_surface();
+                let _ = conn.flush();
             }
             _ => {}
         }
