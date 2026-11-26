@@ -224,6 +224,9 @@ pub fn run_x11_app(
     if let Some(ref pid) = options.initial_panel {
         kb_state.set_panel(pid);
     }
+    if options.force_show {
+        kb_state.visible = true;
+    }
     if options.open_settings {
         kb_state.settings_open = true;
     }

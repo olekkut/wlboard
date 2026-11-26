@@ -139,6 +139,7 @@ fn main() -> ExitCode {
         open_settings: cli.settings,
         open_panel_editor: cli.panel_editor,
         input_method_mode: cli.input_method,
+        force_show: cli.show || cli.toggle,
         initial_panel: cli.panel,
     };
 

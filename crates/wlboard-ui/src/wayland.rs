@@ -119,6 +119,7 @@ pub struct LaunchOptions {
     pub open_settings: bool,
     pub open_panel_editor: bool,
     pub input_method_mode: bool,
+    pub force_show: bool,
     pub initial_panel: Option<String>,
 }
 
@@ -183,7 +184,7 @@ struct WlboardRuntime {
     shm: Shm,
     layer_shell: Option<LayerShell>,
     xdg_shell: Option<XdgShell>,
-    pool: SlotPool,
+    pool: Option<SlotPool>,
 
     pointer: Option<ThemedPointer>,
     touch: Option<wl_touch::WlTouch>,
@@ -293,9 +294,6 @@ pub fn run_wayland_app(
         None
     };
 
-    let pool = SlotPool::new(2560 * 1440 * 4, &shm)
-        .map_err(|e| WaylandRunError::Runtime(format!("Failed to create Wayland SHM pool: {e}")))?;
-
     let config = AppConfig::load_default();
     let preset_store = PresetStore::default_store();
     let panel_store = PanelStore::default_store();
@@ -306,6 +304,8 @@ pub fn run_wayland_app(
     }
     if active_im_mode {
         kb_state.visible = false;
+    } else if options.force_show {
+        kb_state.visible = true;
     }
     if options.open_settings {
         kb_state.settings_open = true;
@@ -366,7 +366,7 @@ pub fn run_wayland_app(
         shm,
         layer_shell,
         xdg_shell,
-        pool,
+        pool: None,
         pointer: None,
         touch: None,
         wl_keyboard: None,
@@ -698,6 +698,15 @@ impl WlboardRuntime {
         self.sync_tray_state();
     }
 
+    fn release_pool_if_hidden(&mut self) {
+        if self.kb_surface.is_none()
+            && self.settings_surface.is_none()
+            && self.editor_surface.is_none()
+        {
+            self.pool = None;
+        }
+    }
+
     fn destroy_keyboard_surface(&mut self) {
         self.pending_im_show = false;
         self.release_all_keys();
@@ -716,6 +725,7 @@ impl WlboardRuntime {
             surface.destroy();
         }
         self.state.visible = false;
+        self.release_pool_if_hidden();
         self.sync_tray_state();
     }
 
@@ -760,6 +770,7 @@ impl WlboardRuntime {
         self.settings_surface = None;
         self.state.settings_open = false;
         self.settings_view.focused_field = None;
+        self.release_pool_if_hidden();
         self.mark_keyboard_dirty();
     }
 
@@ -801,6 +812,7 @@ impl WlboardRuntime {
         self.editor_surface = None;
         self.state.panel_editor_open = false;
         self.editor_view.focused_field = None;
+        self.release_pool_if_hidden();
         self.mark_keyboard_dirty();
     }
 
@@ -1044,9 +1056,16 @@ impl WlboardRuntime {
             let phys_h = (surf_h * scale as u32) as i32;
             let stride = phys_w * 4;
 
+            let Some(pool) = ensure_shm_pool(
+                &mut self.pool,
+                &self.shm,
+                (stride as usize) * (phys_h as usize) * 2,
+            ) else {
+                warn!("Failed creating Wayland SHM pool for input-panel keyboard");
+                return;
+            };
             let Ok((buffer, canvas)) =
-                self.pool
-                    .create_buffer(phys_w, phys_h, stride, wl_shm::Format::Argb8888)
+                pool.create_buffer(phys_w, phys_h, stride, wl_shm::Format::Argb8888)
             else {
                 warn!("Failed allocating Wayland SHM buffer for input-panel keyboard");
                 return;
@@ -1077,9 +1096,16 @@ impl WlboardRuntime {
         }
 
         let stride = kb_phys_w * 4;
+        let Some(pool) = ensure_shm_pool(
+            &mut self.pool,
+            &self.shm,
+            (stride as usize) * (kb_phys_h as usize) * 2,
+        ) else {
+            warn!("Failed creating Wayland SHM pool for keyboard");
+            return;
+        };
         let Ok((buffer, canvas)) =
-            self.pool
-                .create_buffer(kb_phys_w, kb_phys_h, stride, wl_shm::Format::Argb8888)
+            pool.create_buffer(kb_phys_w, kb_phys_h, stride, wl_shm::Format::Argb8888)
         else {
             warn!("Failed allocating Wayland SHM buffer for keyboard");
             return;
@@ -1117,9 +1143,16 @@ impl WlboardRuntime {
         self.settings_view
             .render(&mut self.renderer, &mut pixmap, &self.state, scale as f32);
 
+        let Some(pool) = ensure_shm_pool(
+            &mut self.pool,
+            &self.shm,
+            (stride as usize) * (phys_h as usize) * 2,
+        ) else {
+            warn!("Failed creating Wayland SHM pool for Settings window");
+            return;
+        };
         let Ok((buffer, canvas)) =
-            self.pool
-                .create_buffer(phys_w, phys_h, stride, wl_shm::Format::Argb8888)
+            pool.create_buffer(phys_w, phys_h, stride, wl_shm::Format::Argb8888)
         else {
             warn!("Failed allocating Wayland SHM buffer for Settings window");
             return;
@@ -1162,9 +1195,16 @@ impl WlboardRuntime {
             scale as f32,
         );
 
+        let Some(pool) = ensure_shm_pool(
+            &mut self.pool,
+            &self.shm,
+            (stride as usize) * (phys_h as usize) * 2,
+        ) else {
+            warn!("Failed creating Wayland SHM pool for Panel Editor");
+            return;
+        };
         let Ok((buffer, canvas)) =
-            self.pool
-                .create_buffer(phys_w, phys_h, stride, wl_shm::Format::Argb8888)
+            pool.create_buffer(phys_w, phys_h, stride, wl_shm::Format::Argb8888)
         else {
             warn!("Failed allocating Wayland SHM buffer for Panel Editor");
             return;
@@ -1706,6 +1746,18 @@ impl WlboardRuntime {
             }
         }
     }
+}
+
+fn ensure_shm_pool<'a>(
+    pool: &'a mut Option<SlotPool>,
+    shm: &Shm,
+    min_bytes: usize,
+) -> Option<&'a mut SlotPool> {
+    if pool.is_none() {
+        let initial = min_bytes.max(1280 * 512 * 4);
+        *pool = SlotPool::new(initial, shm).ok();
+    }
+    pool.as_mut()
 }
 
 fn detect_window_resize_edge(p: Point, w: f32, h: f32) -> Option<(XdgResizeEdge, CursorIcon)> {
