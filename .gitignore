@@ -1,6 +1,9 @@
 /target
+/dist
 Cargo.lock
 *.deb
+*.rpm
+*.pkg.tar.zst
 *.buildinfo
 *.changes
 *.orig.tar.*

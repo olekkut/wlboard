@@ -1,0 +1,124 @@
+# Unified multi-distro package definition for wlboard (.deb, .rpm, .pkg.tar.zst).
+# Required environment variables:
+#   VERSION   - semantic version without leading 'v' (e.g. 0.4.0)
+#   NFPM_ARCH - canonical nfpm architecture: amd64 or arm64
+#   BIN_PATH  - path to the stripped release binary for that architecture
+
+name: wlboard
+arch: ${NFPM_ARCH}
+platform: linux
+version: ${VERSION}
+release: "1"
+section: utils
+priority: optional
+maintainer: Aleksander Kutycki <74899889+olekkut@users.noreply.github.com>
+description: |
+  Lightweight, customizable native Wayland & X11 virtual keyboard & panel editor
+  wlboard is a zero-idle-wakeup on-screen virtual keyboard written in Rust with
+  native Wayland floating overlay (zwlr_layer_shell_v1), automatic pure-Rust
+  XWayland/X11 non-focus-stealing fallback for Ubuntu GNOME and X11 desktops,
+  and smart single-keyboard Wayland input-method mode (zwp_input_method_v1 /
+  zwp_input_panel_v1) for KDE Plasma Lockscreen and SDDM login screen.
+vendor: Aleksander Kutycki
+homepage: https://github.com/olekkut/wlboard
+license: GPL-3.0-or-later
+
+contents:
+  - src: ${BIN_PATH}
+    dst: /usr/bin/wlboard
+    file_info:
+      mode: 0755
+
+  - src: packaging/deb/wlboard-im
+    dst: /usr/bin/wlboard-im
+    file_info:
+      mode: 0755
+
+  - src: packaging/deb/70-wlboard-uinput.rules
+    dst: /usr/lib/udev/rules.d/70-wlboard-uinput.rules
+    file_info:
+      mode: 0644
+
+  - src: packaging/common/wlboard-uinput.conf
+    dst: /usr/lib/modules-load.d/wlboard-uinput.conf
+    file_info:
+      mode: 0644
+
+  - src: packaging/deb/io.github.olekkut.wlboard.desktop
+    dst: /usr/share/applications/io.github.olekkut.wlboard.desktop
+    file_info:
+      mode: 0644
+
+  - src: packaging/deb/io.github.olekkut.wlboard-im.desktop
+    dst: /usr/share/applications/io.github.olekkut.wlboard-im.desktop
+    file_info:
+      mode: 0644
+
+  - src: assets/io.github.olekkut.wlboard.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/io.github.olekkut.wlboard.svg
+    file_info:
+      mode: 0644
+
+  - src: packaging/deb/70-wlboard-uinput.rules
+    dst: /usr/share/wlboard/udev/70-wlboard-uinput.rules
+    file_info:
+      mode: 0644
+
+  - src: packaging/deb/setup-uinput.sh
+    dst: /usr/share/wlboard/udev/setup-uinput.sh
+    file_info:
+      mode: 0755
+
+  - src: packaging/deb/setup-sddm.sh
+    dst: /usr/share/wlboard/scripts/setup-sddm.sh
+    file_info:
+      mode: 0755
+
+  - src: packaging/deb/wlboard-sddm-kwin
+    dst: /usr/share/wlboard/scripts/wlboard-sddm-kwin
+    file_info:
+      mode: 0755
+
+  - src: LICENSE
+    dst: /usr/share/doc/wlboard/copyright
+    file_info:
+      mode: 0644
+
+  - src: LICENSE
+    dst: /usr/share/licenses/wlboard/LICENSE
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: packaging/scripts/postinstall.sh
+  postremove: packaging/scripts/postremove.sh
+
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.31)
+    recommends:
+      - fonts-dejavu-core | fonts-noto-core
+
+  rpm:
+    depends:
+      - glibc >= 2.31
+    recommends:
+      - dejavu-sans-fonts
+
+  archlinux:
+    depends:
+      - glibc
+    suggests:
+      - "ttf-dejavu: default sans-serif keyboard font"
+      - "noto-fonts: international script glyph fallback"
+
+deb:
+  fields:
+    Multi-Arch: foreign
+
+rpm:
+  group: Applications/System
+
+archlinux:
+  packager: Aleksander Kutycki <74899889+olekkut@users.noreply.github.com>

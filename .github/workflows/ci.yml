@@ -20,8 +20,15 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Install xkbcomp and fonts for headless verification
-        run: sudo apt-get update && sudo apt-get install -y x11-xkb-utils fonts-dejavu-core
+      - name: Install xkbcomp, fonts, and shellcheck for verification
+        run: sudo apt-get update && sudo apt-get install -y x11-xkb-utils fonts-dejavu-core shellcheck
+
+      - name: Lint packaging scripts & nfpm manifest
+        run: |
+          set -euo pipefail
+          bash -n packaging/build-packages.sh packaging/check-glibc.sh packaging/aur/update-pkgbuild.sh packaging/deb/build-deb.sh packaging/deb/setup-sddm.sh packaging/deb/setup-uinput.sh
+          sh -n packaging/scripts/postinstall.sh packaging/scripts/postremove.sh packaging/tarball/install.sh packaging/tarball/uninstall.sh packaging/deb/postinst packaging/deb/wlboard-im packaging/deb/wlboard-sddm-kwin
+          shellcheck packaging/build-packages.sh packaging/check-glibc.sh packaging/aur/update-pkgbuild.sh packaging/scripts/postinstall.sh packaging/scripts/postremove.sh packaging/tarball/install.sh packaging/tarball/uninstall.sh
 
       - name: Check formatting
         run: cargo fmt --all -- --check

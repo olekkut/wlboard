@@ -1,0 +1,214 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build/publish (e.g. v0.4.0; leave empty for latest v* tag)"
+        required: false
+        type: string
+        default: ""
+      dry_run:
+        description: "Build packages and upload workflow artifacts without publishing a GitHub Release"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+  NFPM_VERSION: "2.43.0"
+  ZIG_VERSION: "0.14.1"
+  GLIBC_FLOOR: "2.31"
+
+jobs:
+  resolve-version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      dry_run: ${{ steps.meta.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag and semantic version
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            DRY_RUN="false"
+          else
+            DRY_RUN="${{ inputs.dry_run }}"
+            TAG="${{ inputs.tag }}"
+            if [[ -z "${TAG}" ]]; then
+              TAG="$(git tag -l 'v*' --sort=-v:refname | head -n 1)"
+            fi
+            if [[ -z "${TAG}" ]]; then
+              CARGO_VER="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
+              TAG="v${CARGO_VER}"
+            fi
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "dry_run=${DRY_RUN}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved release tag=${TAG}, version=${VERSION}, dry_run=${DRY_RUN}"
+
+  build:
+    needs: resolve-version
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            rust_target: x86_64-unknown-linux-gnu
+            zig_target: x86_64-unknown-linux-gnu.2.31
+          - arch: aarch64
+            rust_target: aarch64-unknown-linux-gnu
+            zig_target: aarch64-unknown-linux-gnu.2.31
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (${{ matrix.rust_target }})
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.arch }}
+
+      - name: Install Zig ${{ env.ZIG_VERSION }}
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Install cargo-zigbuild
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
+      - name: Install nfpm v${{ env.NFPM_VERSION }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin nfpm
+          nfpm --version
+
+      - name: Build portable binary (${{ matrix.zig_target }})
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo zigbuild --release --target "${{ matrix.zig_target }}" --bin wlboard
+          ls -lh "target/${{ matrix.rust_target }}/release/wlboard"
+
+      - name: Verify stripped ELF & GLIBC <= ${{ env.GLIBC_FLOOR }} floor
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./packaging/check-glibc.sh "target/${{ matrix.rust_target }}/release/wlboard" "${GLIBC_FLOOR}"
+
+      - name: Build .deb, .rpm, .pkg.tar.zst, and .tar.gz packages (${{ matrix.arch }})
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./packaging/build-packages.sh \
+            --version "${{ needs.resolve-version.outputs.version }}" \
+            --arch "${{ matrix.arch }}" \
+            --bin "target/${{ matrix.rust_target }}/release/wlboard" \
+            --out-dir dist \
+            --formats all
+
+      - name: Inspect built packages (${{ matrix.arch }})
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="${{ needs.resolve-version.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          dpkg-deb --info "dist/wlboard-${VER}-linux-${ARCH}.deb"
+          dpkg-deb --contents "dist/wlboard-${VER}-linux-${ARCH}.deb"
+          tar -tzf "dist/wlboard-${VER}-linux-${ARCH}.tar.gz"
+          zstd -dc "dist/wlboard-${VER}-linux-${ARCH}.pkg.tar.zst" | tar -tf -
+
+      - name: Upload architecture packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.arch }}
+          path: dist/wlboard-*
+          if-no-files-found: error
+
+  publish:
+    needs: [resolve-version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download built packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: packages-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS and verify all 9 release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="${{ needs.resolve-version.outputs.version }}"
+          cd release-assets
+          EXPECTED=(
+            "wlboard-${VER}-linux-x86_64.deb"
+            "wlboard-${VER}-linux-aarch64.deb"
+            "wlboard-${VER}-linux-x86_64.rpm"
+            "wlboard-${VER}-linux-aarch64.rpm"
+            "wlboard-${VER}-linux-x86_64.pkg.tar.zst"
+            "wlboard-${VER}-linux-aarch64.pkg.tar.zst"
+            "wlboard-${VER}-linux-x86_64.tar.gz"
+            "wlboard-${VER}-linux-aarch64.tar.gz"
+          )
+          for f in "${EXPECTED[@]}"; do
+            if [[ ! -f "$f" ]]; then
+              echo "Missing expected release asset: $f" >&2
+              exit 1
+            fi
+          done
+          LC_ALL=C sha256sum "${EXPECTED[@]}" > SHA256SUMS
+          cat SHA256SUMS
+          COUNT="$(find . -maxdepth 1 -type f | wc -l)"
+          if [[ "${COUNT}" -ne 9 ]]; then
+            echo "Expected exactly 9 release assets, found ${COUNT}" >&2
+            exit 1
+          fi
+
+      - name: Upload combined release-assets artifact (dry-run & audit copy)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wlboard-${{ needs.resolve-version.outputs.version }}-release-assets
+          path: release-assets/*
+          if-no-files-found: error
+
+      - name: Attest build provenance for all 9 release assets
+        if: needs.resolve-version.outputs.dry_run != 'true'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release-assets/*
+
+      - name: Publish GitHub Release with all 9 assets
+        if: needs.resolve-version.outputs.dry_run != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve-version.outputs.tag }}
+          generate_release_notes: true
+          files: release-assets/*

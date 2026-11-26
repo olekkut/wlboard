@@ -60,14 +60,66 @@ Built directly on `smithay-client-toolkit`, `x11rb`, `tiny-skia`, `cosmic-text`,
 
 ## Installation
 
-### Ubuntu / Kubuntu / Debian (`.deb` Package — `amd64`)
+Prebuilt release packages for **`x86_64`** and **`aarch64`** (built against `glibc 2.31+` for broad distro compatibility) are published on the [GitHub Releases](https://github.com/olekkut/wlboard/releases/latest) page with build provenance attestations. Each package automatically installs `/usr/lib/udev/rules.d/70-wlboard-uinput.rules`, `/usr/lib/modules-load.d/wlboard-uinput.conf`, desktop entries, and SDDM/Lockscreen helpers.
 
-Install the latest prebuilt `.deb` package (automatically installs the `/dev/uinput` udev rule, KDE Plasma virtual keyboard desktop entry, and SDDM helper):
+### Debian / Ubuntu / Kubuntu (`.deb`)
 
 ```bash
-curl -fsSL -o /tmp/wlboard.deb https://raw.githubusercontent.com/olekkut/wlboard/deb-build/wlboard_0.4.0-1_amd64.deb \
+VER="0.4.0"
+ARCH="$(uname -m)" # x86_64 or aarch64
+curl -fsSL -o "/tmp/wlboard.deb" \
+  "https://github.com/olekkut/wlboard/releases/download/v${VER}/wlboard-${VER}-linux-${ARCH}.deb" \
   && sudo apt install -y /tmp/wlboard.deb \
   && rm -f /tmp/wlboard.deb
+```
+
+### Fedora / openSUSE / RHEL (`.rpm`)
+
+```bash
+VER="0.4.0"
+ARCH="$(uname -m)" # x86_64 or aarch64
+curl -fsSL -o "/tmp/wlboard.rpm" \
+  "https://github.com/olekkut/wlboard/releases/download/v${VER}/wlboard-${VER}-linux-${ARCH}.rpm" \
+  && sudo dnf install -y /tmp/wlboard.rpm \
+  && rm -f /tmp/wlboard.rpm
+```
+
+*(On openSUSE, replace `sudo dnf install -y` with `sudo zypper --non-interactive install --allow-unsigned-rpm`.)*
+
+### Arch Linux / SteamOS (`.pkg.tar.zst` or AUR `wlboard-bin`)
+
+Direct release package:
+
+```bash
+VER="0.4.0"
+ARCH="$(uname -m)" # x86_64 or aarch64
+curl -fsSL -o "/tmp/wlboard.pkg.tar.zst" \
+  "https://github.com/olekkut/wlboard/releases/download/v${VER}/wlboard-${VER}-linux-${ARCH}.pkg.tar.zst" \
+  && sudo pacman -U --noconfirm /tmp/wlboard.pkg.tar.zst \
+  && rm -f /tmp/wlboard.pkg.tar.zst
+```
+
+*(AUR template: see `packaging/aur/PKGBUILD.in` for `wlboard-bin`.)*
+
+### Generic Linux (`.tar.gz` + `install.sh`)
+
+```bash
+VER="0.4.0"
+ARCH="$(uname -m)" # x86_64 or aarch64
+curl -fsSL "https://github.com/olekkut/wlboard/releases/download/v${VER}/wlboard-${VER}-linux-${ARCH}.tar.gz" \
+  | tar -xz -C /tmp
+sudo "/tmp/wlboard-${VER}-linux-${ARCH}/install.sh" --with-udev
+rm -rf "/tmp/wlboard-${VER}-linux-${ARCH}"
+```
+
+*(Pass `PREFIX="$HOME/.local"` for a user-local install, or run `uninstall.sh --with-udev` to remove cleanly.)*
+
+### Verify Checksums (`SHA256SUMS`)
+
+```bash
+VER="0.4.0"
+curl -fsSLO "https://github.com/olekkut/wlboard/releases/download/v${VER}/SHA256SUMS"
+sha256sum --ignore-missing -c SHA256SUMS
 ```
 
 ### Build from Source
@@ -78,14 +130,10 @@ Requires Rust 1.89+ (`cargo`):
 git clone https://github.com/olekkut/wlboard.git
 cd wlboard
 cargo build --release
-sudo install -Dm755 target/release/wlboard /usr/bin/wlboard
-sudo install -Dm755 packaging/deb/wlboard-im /usr/bin/wlboard-im
-sudo install -Dm644 packaging/deb/io.github.olekkut.wlboard.desktop /usr/share/applications/io.github.olekkut.wlboard.desktop
-sudo install -Dm644 packaging/deb/io.github.olekkut.wlboard-im.desktop /usr/share/applications/io.github.olekkut.wlboard-im.desktop
-sudo install -Dm644 assets/io.github.olekkut.wlboard.svg /usr/share/icons/hicolor/scalable/apps/io.github.olekkut.wlboard.svg
+./packaging/build-packages.sh --formats tarball --out-dir dist
 ```
 
-On **KDE Plasma** or **Ubuntu GNOME** desktop (where `/dev/uinput` is used for virtual keystrokes), run once if you installed from source:
+On **KDE Plasma** or **Ubuntu GNOME** desktop (where `/dev/uinput` is used for virtual keystrokes), run once if you installed manually without `--with-udev`:
 
 ```bash
 ./packaging/deb/setup-uinput.sh

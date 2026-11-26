@@ -1,0 +1,46 @@
+# Maintainer: Aleksander Kutycki <74899889+olekkut@users.noreply.github.com>
+# Template rendered by packaging/aur/update-pkgbuild.sh on each GitHub Release.
+
+pkgname=wlboard-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="Lightweight, zero-idle-wakeup native Wayland & X11 virtual keyboard and panel editor"
+arch=('x86_64' 'aarch64')
+url="https://github.com/olekkut/wlboard"
+license=('GPL-3.0-or-later')
+depends=('glibc')
+optdepends=(
+    'ttf-dejavu: default sans-serif keyboard font'
+    'noto-fonts: international script glyph fallback'
+    'wl-clipboard: Wayland clipboard sync for inline settings fields'
+)
+provides=('wlboard')
+conflicts=('wlboard' 'wlboard-git')
+install=wlboard-bin.install
+
+source_x86_64=("${url}/releases/download/v${pkgver}/wlboard-${pkgver}-linux-x86_64.tar.gz")
+source_aarch64=("${url}/releases/download/v${pkgver}/wlboard-${pkgver}-linux-aarch64.tar.gz")
+sha256sums_x86_64=('@SHA256_X86_64@')
+sha256sums_aarch64=('@SHA256_AARCH64@')
+
+package() {
+    cd "${srcdir}/wlboard-${pkgver}-linux-${CARCH}"
+
+    install -Dm755 wlboard "${pkgdir}/usr/bin/wlboard"
+    install -Dm755 wlboard-im "${pkgdir}/usr/bin/wlboard-im"
+
+    install -Dm644 70-wlboard-uinput.rules "${pkgdir}/usr/lib/udev/rules.d/70-wlboard-uinput.rules"
+    install -Dm644 wlboard-uinput.conf "${pkgdir}/usr/lib/modules-load.d/wlboard-uinput.conf"
+
+    install -Dm644 io.github.olekkut.wlboard.desktop "${pkgdir}/usr/share/applications/io.github.olekkut.wlboard.desktop"
+    install -Dm644 io.github.olekkut.wlboard-im.desktop "${pkgdir}/usr/share/applications/io.github.olekkut.wlboard-im.desktop"
+    install -Dm644 io.github.olekkut.wlboard.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/io.github.olekkut.wlboard.svg"
+
+    install -Dm644 70-wlboard-uinput.rules "${pkgdir}/usr/share/wlboard/udev/70-wlboard-uinput.rules"
+    install -Dm755 setup-uinput.sh "${pkgdir}/usr/share/wlboard/udev/setup-uinput.sh"
+    install -Dm755 setup-sddm.sh "${pkgdir}/usr/share/wlboard/scripts/setup-sddm.sh"
+    install -Dm755 wlboard-sddm-kwin "${pkgdir}/usr/share/wlboard/scripts/wlboard-sddm-kwin"
+
+    install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+    install -Dm644 README.md "${pkgdir}/usr/share/doc/wlboard/README.md"
+}
